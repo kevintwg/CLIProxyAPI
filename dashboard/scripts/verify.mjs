@@ -39,14 +39,13 @@ async function unlock() {
 }
 async function capture(name) {
   await page.evaluate(() => window.scrollTo(0, 0));
-  if (
-    await page.getByRole("button", { name: "Dismiss notification" }).isVisible()
-  ) {
-    await page.getByRole("button", { name: "Dismiss notification" }).click();
-  }
+  await page.evaluate(() => {
+    document.querySelector('[aria-label="Dismiss notification"]')?.click();
+  });
+  await page.locator(".toast").waitFor({ state: "detached", timeout: 3000 });
   await page.screenshot({
     path: join(output, `${name}.png`),
-    fullPage: true,
+    fullPage: !(await page.getByRole("dialog").isVisible()),
     animations: "disabled",
   });
 }
