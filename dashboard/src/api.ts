@@ -27,6 +27,8 @@ export type RoutingStrategy =
 export interface LoginSession {
   url: string;
   state: string;
+  flow?: "device";
+  user_code?: string;
 }
 export interface LoginStatus {
   status: "wait" | "ok" | "error";
@@ -117,6 +119,21 @@ function strategy(value: unknown): RoutingStrategy {
     );
   }
   return value;
+}
+
+function readStrategy(value: unknown): RoutingStrategy {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : value;
+  switch (normalized) {
+    case "ff":
+    case "fillfirst":
+      return "fill-first";
+    case "wrr":
+    case "weightedroundrobin":
+      return "weighted-round-robin";
+    default:
+      return strategy(normalized);
+  }
 }
 
 class HttpError extends Error {
@@ -234,7 +251,7 @@ export class ManagementApi {
 
   async routing(signal?: AbortSignal): Promise<RoutingStrategy> {
     try {
-      return strategy(
+      return readStrategy(
         await this.request(
           "/config/routing/strategy",
           "GET",
@@ -303,7 +320,14 @@ export class ManagementApi {
     ) {
       throw new Error("Unexpected management response: invalid login URL.");
     }
-    return { url, state: string(data.state) };
+    const result: LoginSession = { url, state: string(data.state) };
+    if (data.flow !== undefined) {
+      if (data.flow !== "device")
+        throw new Error("Unexpected management response: invalid login flow.");
+      result.flow = data.flow;
+    }
+    if (data.user_code !== undefined) result.user_code = string(data.user_code);
+    return result;
   }
 
   async loginStatus(state: string, signal?: AbortSignal): Promise<LoginStatus> {

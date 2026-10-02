@@ -141,6 +141,19 @@ describe("ManagementApi", () => {
     },
   );
 
+  it.each([
+    ["ff", "fill-first"],
+    ["fillfirst", "fill-first"],
+    ["wrr", "weighted-round-robin"],
+    ["weightedroundrobin", "weighted-round-robin"],
+    [" FILL-FIRST ", "fill-first"],
+    [" Weighted-Round-Robin ", "weighted-round-robin"],
+    [" ROUND-ROBIN ", "round-robin"],
+  ])("reads runtime routing alias %s as %s", async (input, expected) => {
+    respond(input);
+    expect(await api.routing()).toBe(expected);
+  });
+
   it("sends exact mutation bodies and requires confirmation", async () => {
     respond({ status: "ok" });
     await api.setRouting("fill-first");
@@ -262,6 +275,33 @@ describe("ManagementApi", () => {
   ])("rejects invalid login URLs: %s", async (url) => {
     respond({ url, state: "s" });
     await expect(api.startLogin("codex")).rejects.toThrow("invalid login URL");
+  });
+
+  it("retains device codes for verification URLs without a prefilled code", async () => {
+    const session = {
+      url: "https://example.invalid/activate",
+      state: "generated-state",
+      flow: "device",
+      user_code: "TEST-1234",
+    };
+    respond({ ...session, device_code: "private-provider-token" });
+    expect(await api.startLogin("xai")).toEqual(session);
+  });
+
+  it.each([
+    { flow: 3 },
+    { flow: "unexpected" },
+    { user_code: 1234 },
+    { user_code: "" },
+  ])("rejects malformed device sign-in metadata: %j", async (metadata) => {
+    respond({
+      url: "https://example.invalid/activate",
+      state: "s",
+      ...metadata,
+    });
+    await expect(api.startLogin("xai")).rejects.toThrow(
+      "Unexpected management response",
+    );
   });
 
   it("rejects missing session fields and unexpected login states", async () => {

@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App } from "./App";
 import { Accounts } from "./Accounts";
 import { ConnectAccount } from "./ConnectAccount";
 import { Models } from "./Models";
@@ -16,6 +17,38 @@ const account: Credential = {
   unavailable: false,
   label: "Test account",
 };
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("connects a gateway whose persisted routing uses a supported alias", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.endsWith("/credentials") ? { files: [account] } : "ff",
+          ),
+        ),
+    ),
+  );
+  render(<App />);
+  await userEvent.click(
+    screen.getAllByRole("button", { name: "Connect gateway" })[0],
+  );
+  await userEvent.type(
+    screen.getByLabelText("Management key", { exact: true }),
+    "test-key",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+  expect(
+    await screen.findByText("Gateway connected", { selector: "strong" }),
+  ).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+  expect(
+    screen.getByRole("radio", { name: /One account at a time/ }),
+  ).toBeChecked();
+});
 
 describe("account and routing controls", () => {
   it("shows a rejected pause without claiming the account is paused", async () => {
@@ -140,6 +173,53 @@ describe("model library", () => {
 });
 
 describe("provider sign-in", () => {
+  it("displays and copies a device code while waiting for provider confirmation", async () => {
+    const user = userEvent.setup();
+    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (url: string) =>
+          new Response(
+            JSON.stringify(
+              url.includes("/oauth/auth-url")
+                ? {
+                    url: "https://example.invalid/activate",
+                    state: "generated-state",
+                    flow: "device",
+                    user_code: "TEST-1234",
+                  }
+                : url.includes("/oauth/status")
+                  ? { status: "wait" }
+                  : { status: "ok" },
+            ),
+          ),
+      ),
+    );
+    const connected = vi.fn();
+    render(
+      <ConnectAccount
+        api={new ManagementApi("test-key")}
+        onClose={vi.fn()}
+        onConnected={connected}
+        notify={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Grok" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("TEST-1234")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open provider sign-in" }),
+    ).toHaveAttribute("href", "https://example.invalid/activate");
+    await user.click(screen.getByRole("button", { name: "Copy sign-in code" }));
+    expect(copy).toHaveBeenCalledWith("TEST-1234");
+    expect(connected).not.toHaveBeenCalled();
+    expect(screen.queryByText("You're connected")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Signing in from another computer?"),
+    ).not.toBeInTheDocument();
+  });
+
   it("cancels a pending login when the dialog is dismissed", async () => {
     const api = new ManagementApi("test-key");
     vi.spyOn(api, "startLogin").mockResolvedValue({

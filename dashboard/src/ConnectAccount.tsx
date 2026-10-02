@@ -7,7 +7,7 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { ManagementApi, type LoginSession } from "./api";
-import { Dialog, ProviderMark, providerName } from "./ui";
+import { CopyButton, Dialog, ProviderMark, providerName } from "./ui";
 
 const loginProviders = [
   "codex",
@@ -184,6 +184,13 @@ export function ConnectAccount({
         <div className="login-session">
           <ProviderMark provider={provider} />
           <p>Continue in a new tab to securely sign in with your provider.</p>
+          {session.user_code && (
+            <div className="device-code">
+              <p>Enter this code when your provider asks for it.</p>
+              <code>{session.user_code}</code>
+              <CopyButton value={session.user_code} label="Copy sign-in code" />
+            </div>
+          )}
           <a
             className="button primary"
             href={session.url}
@@ -197,41 +204,44 @@ export function ConnectAccount({
             <LoaderCircle className={error ? "" : "spinning"} size={17} />
             {error ? "Sign-in needs attention" : "Waiting for your provider…"}
           </div>
-          <details>
-            <summary>Signing in from another computer?</summary>
-            <p>
-              If the final callback page does not load, copy its full URL from
-              the address bar and paste it here.
-            </p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitCallback();
-              }}
-            >
-              <label htmlFor="callback-url">Callback URL</label>
-              <input
-                id="callback-url"
-                type="url"
-                required
-                value={callback}
-                onChange={(event) => setCallback(event.target.value)}
-                placeholder="http://localhost:…"
-                autoComplete="off"
-              />
-              <button
-                className="button secondary"
-                disabled={submitting || !callback.trim()}
-              >
-                {submitting ? "Submitting…" : "Complete sign-in"}
-              </button>
-            </form>
-            {callbackSubmitted && (
-              <p role="status">
-                Callback received. Waiting for the account to finish connecting.
+          {session.flow !== "device" && (
+            <details>
+              <summary>Signing in from another computer?</summary>
+              <p>
+                If the final callback page does not load, copy its full URL from
+                the address bar and paste it here.
               </p>
-            )}
-          </details>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitCallback();
+                }}
+              >
+                <label htmlFor="callback-url">Callback URL</label>
+                <input
+                  id="callback-url"
+                  type="url"
+                  required
+                  value={callback}
+                  onChange={(event) => setCallback(event.target.value)}
+                  placeholder="http://localhost:…"
+                  autoComplete="off"
+                />
+                <button
+                  className="button secondary"
+                  disabled={submitting || !callback.trim()}
+                >
+                  {submitting ? "Submitting…" : "Complete sign-in"}
+                </button>
+              </form>
+              {callbackSubmitted && (
+                <p role="status">
+                  Callback received. Waiting for the account to finish
+                  connecting.
+                </p>
+              )}
+            </details>
+          )}
           {error && (
             <div>
               <p role="alert" className="inline-error">
