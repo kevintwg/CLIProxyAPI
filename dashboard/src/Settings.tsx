@@ -252,7 +252,9 @@ export function Settings({
                     max="2147483647"
                     step="1"
                     disabled={!base || busy}
-                    value={draft.retry[key]}
+                    value={
+                      Number.isNaN(draft.retry[key]) ? "" : draft.retry[key]
+                    }
                     onChange={(event) =>
                       update("retry", {
                         ...draft.retry,

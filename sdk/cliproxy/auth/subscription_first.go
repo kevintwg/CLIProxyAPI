@@ -139,7 +139,7 @@ func SubscriptionRoutingProfile(a *Auth, now time.Time, maxAge time.Duration) Ro
 	if !fresh {
 		return profile
 	}
-	reset := observedWeeklyReset(a.Provider, signals, now)
+	reset := observedWeeklyReset(a.Provider, signals, a.Quota.ObservedAt, now)
 	if reset.After(now) {
 		profile.WeeklyResetAt = reset.UTC().Format(time.RFC3339)
 		profile.ResetSource = "observed"
@@ -178,7 +178,7 @@ func detectedRoutingPlan(a *Auth, signals map[string]string, fresh bool) string 
 	return plan
 }
 
-func observedWeeklyReset(provider string, signals map[string]string, now time.Time) time.Time {
+func observedWeeklyReset(provider string, signals map[string]string, observedAt, now time.Time) time.Time {
 	var reset time.Time
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude":
@@ -190,12 +190,26 @@ func observedWeeklyReset(provider string, signals map[string]string, now time.Ti
 				continue
 			}
 			candidate := observedResetTime(signals[prefix+"reset-at"])
+			if candidate.IsZero() {
+				candidate = observedRelativeWeeklyReset(signals[prefix+"reset-after-seconds"], observedAt)
+			}
+
 			if candidate.After(now) && (reset.IsZero() || candidate.Before(reset)) {
 				reset = candidate
 			}
 		}
 	}
 	return reset
+}
+
+// Relative weekly resets are anchored to the response observation, never the next pick.
+func observedRelativeWeeklyReset(raw string, observedAt time.Time) time.Time {
+	const weeklyWindowSeconds = 7 * 24 * 60 * 60
+	seconds, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || seconds <= 0 || seconds > weeklyWindowSeconds || observedAt.IsZero() {
+		return time.Time{}
+	}
+	return observedAt.Add(time.Duration(seconds) * time.Second)
 }
 
 func observedResetTime(raw string) time.Time {

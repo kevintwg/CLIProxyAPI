@@ -395,3 +395,44 @@ it("refreshes global routing settings when there are no unsaved edits", async ()
   );
   expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
 });
+
+it("displays omitted retry values as zero and saves explicit rounds and wait", async () => {
+  const api = new ManagementApi("test-key");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(new Response(JSON.stringify({}))),
+  );
+  const saved = parseRouting({
+    retry: { "request-retry": 3, "max-retry-interval": 30 },
+  });
+  vi.spyOn(api, "setRoutingSettings").mockResolvedValue(saved);
+  render(
+    <Settings
+      api={api}
+      strategy="round-robin"
+      onRefresh={vi.fn().mockResolvedValue(undefined)}
+      onDisconnect={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: /Share the work/ })).toBeEnabled(),
+  );
+  await userEvent.click(
+    screen.getByText("Retry options", { selector: "summary" }),
+  );
+  const rounds = screen.getByLabelText("Retry rounds");
+  const interval = screen.getByLabelText("Maximum retry wait (seconds)");
+  expect(rounds).toHaveValue(0);
+  expect(interval).toHaveValue(0);
+  await userEvent.clear(rounds);
+  await userEvent.type(rounds, "3");
+  await userEvent.clear(interval);
+  await userEvent.type(interval, "30");
+  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(api.setRoutingSettings).toHaveBeenCalledWith({
+      retry: { "request-retry": 3, "max-retry-interval": 30 },
+    }),
+  );
+});

@@ -347,7 +347,7 @@ describe("routing customization", () => {
     });
     const settings = await api.routingSettings();
     expect(settings.future).toEqual({ enabled: true });
-    expect(settings.retry).toMatchObject({ extra: 9, "request-retry": 3 });
+    expect(settings.retry).toMatchObject({ extra: 9, "request-retry": 0 });
     expect(call().url).toBe("/v8/management/config/routing");
   });
   it.each([

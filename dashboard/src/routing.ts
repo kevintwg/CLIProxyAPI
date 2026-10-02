@@ -21,9 +21,9 @@ export const routingDefaults: RoutingSettings = {
   "subscription-first-max-observation-age": "30m",
   "subscription-first-prefer-weekly-reset": true,
   retry: {
-    "request-retry": 3,
+    "request-retry": 0,
     "max-retry-credentials": 0,
-    "max-retry-interval": 30,
+    "max-retry-interval": 0,
   },
 };
 export function durationSeconds(value: unknown): number {

@@ -195,3 +195,58 @@ func TestSubscriptionRoutingProfileWeeklyPrimaryAndOverrides(t *testing.T) {
 		t.Fatal("unknown plan ranked as known tier")
 	}
 }
+
+func TestSubscriptionRoutingRelativeWeeklyReset(t *testing.T) {
+	observed := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	expected := observed.Add(time.Hour).Format(time.RFC3339)
+	for _, tt := range []struct {
+		name, window, relative, absolute string
+		elapsed, maxAge                  time.Duration
+		want                             string
+	}{
+		{"primary relative", "10080", "3600", "", 0, 30 * time.Minute, expected},
+		{"elapsed time keeps anchor", "10080", "3600", "", 20 * time.Minute, 30 * time.Minute, expected},
+		{"stale", "10080", "3600", "", 31 * time.Minute, 30 * time.Minute, ""},
+		{"expired", "10080", "3600", "", time.Hour, time.Hour, ""},
+		{"hourly", "300", "3600", "", 0, 30 * time.Minute, ""},
+		{"missing window", "", "3600", "", 0, 30 * time.Minute, ""},
+		{"missing relative", "10080", "", "", 0, 30 * time.Minute, ""},
+		{"malformed", "10080", "tomorrow", "", 0, 30 * time.Minute, ""},
+		{"fractional", "10080", "1.5", "", 0, 30 * time.Minute, ""},
+		{"zero", "10080", "0", "", 0, 30 * time.Minute, ""},
+		{"negative", "10080", "-1", "", 0, 30 * time.Minute, ""},
+		{"beyond weekly window", "10080", "604801", "", 0, 30 * time.Minute, ""},
+		{"duration overflow", "10080", "9223372036854775807", "", 0, 30 * time.Minute, ""},
+		{"integer overflow", "10080", "9223372036854775808", "", 0, 30 * time.Minute, ""},
+		{"absolute wins", "10080", "3600", observed.Add(2 * time.Hour).Format(time.RFC3339), 0, 30 * time.Minute, observed.Add(2 * time.Hour).Format(time.RFC3339)},
+		{"malformed absolute fallback", "10080", "3600", "invalid", 0, 30 * time.Minute, expected},
+		{"expired absolute stays expired", "10080", "3600", observed.Add(-time.Minute).Format(time.RFC3339), 0, 30 * time.Minute, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Auth{Provider: "codex", Quota: QuotaState{ObservedAt: observed}}
+			// Exercise the production passive-header collector, including normalization.
+			a.Quota.ObserveResponseHeadersForProvider("codex", http.Header{
+				"X-Codex-Primary-Window-Minutes":      []string{tt.window},
+				"X-Codex-Primary-Reset-After-Seconds": []string{tt.relative},
+				"X-Codex-Primary-Reset-At":            []string{tt.absolute},
+			}, observed)
+			p := SubscriptionRoutingProfile(a, observed.Add(tt.elapsed), tt.maxAge)
+			if p.WeeklyResetAt != tt.want {
+				t.Fatalf("reset=%q want=%q", p.WeeklyResetAt, tt.want)
+			}
+			if tt.want != "" && p.ResetSource != "observed" {
+				t.Fatalf("source=%q", p.ResetSource)
+			}
+		})
+	}
+	a := &Auth{Provider: "codex", Quota: QuotaState{ObservedAt: observed, Signals: map[string]string{
+		"X-Codex-Secondary-Window-Minutes": "10080", "X-Codex-Secondary-Reset-After-Seconds": "604800",
+	}}}
+	if p := SubscriptionRoutingProfile(a, observed, 30*time.Minute); p.WeeklyResetAt != observed.Add(7*24*time.Hour).Format(time.RFC3339) {
+		t.Fatal("secondary weekly relative reset missing")
+	}
+	a.Quota.ObservedAt = time.Time{}
+	if p := SubscriptionRoutingProfile(a, observed, 30*time.Minute); p.WeeklyResetAt != "" {
+		t.Fatal("missing observation trusted")
+	}
+}
