@@ -77,3 +77,24 @@ To run the browser checks and capture safe proof, install Chromium once with
 `npx playwright install chromium`, then set `DASHBOARD_PROOF_ACCESS` to the
 runner's access file and `DASHBOARD_EVIDENCE_DIR` to a private output directory
 and run `npm run test:browser`. The test requires the populated proof instance.
+
+## Routing customization
+
+Settings offers rotation, fill-first, weighted rotation and subscription order.
+The first three prefer higher priority accounts. Weighted rotation divides work
+within the highest available priority group; a zero weight excludes the account.
+Subscription order uses lower tier ranks first, then the earliest usable weekly
+reset. Codex plan ranks are detected (free 0, go 1, plus 2, pro 3); Claude ranks
+can be entered manually. Unknown ranks are used last.
+
+Weekly reset observations come from provider request traffic. Past resets and
+observations older than the configured maximum age are ignored. There is no
+background quota polling. An account can have a future manual reset override;
+clearing its rank or reset returns that field to automatic detection.
+
+Conversation affinity helps preserve provider caches while an assigned account
+is available. Routing settings changes may reset existing assignments. Account
+field edits are saved separately from global settings. Each save patches only
+changed fields and reads back persisted values before confirming success.
+Refreshing account data preserves unsaved routing drafts. API-key accounts
+configured only in YAML are outside this dashboard's account controls.

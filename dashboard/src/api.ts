@@ -1,3 +1,10 @@
+import {
+  durationSeconds,
+  integer,
+  parseRouting,
+  patchMatches,
+  type RoutingSettings,
+} from "./routing";
 export interface Credential {
   id: string;
   name: string;
@@ -13,6 +20,19 @@ export interface Credential {
   success?: number;
   failed?: number;
   updated_at?: string;
+  priority?: number;
+  weight?: number;
+  routing_tier?: number;
+  routing_weekly_reset_at?: string;
+  plan_type?: string;
+  routing_profile?: {
+    tier?: number;
+    tier_source: "manual" | "plan" | "unknown";
+    plan?: string;
+    weekly_reset_at?: string;
+    reset_source: "manual" | "observed" | "unknown";
+    observed_at?: string;
+  };
 }
 
 export interface Model {
@@ -23,7 +43,7 @@ export interface Model {
 }
 
 export type RoutingStrategy =
-  "round-robin" | "weighted-round-robin" | "fill-first";
+  "round-robin" | "weighted-round-robin" | "fill-first" | "subscription-first";
 export interface LoginSession {
   url: string;
   state: string;
@@ -92,6 +112,52 @@ function credential(value: unknown): Credential {
   );
   optionalFields(item, result, ["success", "failed"], "number");
   optionalFields(item, result, ["runtime_only"], "boolean");
+  optionalFields(
+    item,
+    result,
+    ["priority", "weight", "routing_tier"],
+    "number",
+  );
+  optionalFields(
+    item,
+    result,
+    ["routing_weekly_reset_at", "plan_type"],
+    "string",
+  );
+  if (
+    result.routing_weekly_reset_at !== undefined &&
+    !Number.isFinite(Date.parse(result.routing_weekly_reset_at))
+  )
+    throw new Error("Unexpected routing reset date.");
+  if (result.priority !== undefined)
+    integer(result.priority, -2147483648, 2147483647, "Priority");
+  if (result.weight !== undefined) integer(result.weight, 0, 1000000, "Weight");
+  if (result.routing_tier !== undefined)
+    integer(result.routing_tier, 0, 1000, "Tier rank");
+  if (item.routing_profile !== undefined) {
+    const profile = object(item.routing_profile);
+    if (
+      !["manual", "plan", "unknown"].includes(String(profile.tier_source)) ||
+      !["manual", "observed", "unknown"].includes(String(profile.reset_source))
+    )
+      throw new Error("Unexpected routing profile response.");
+    const parsed = {
+      tier_source: profile.tier_source,
+      reset_source: profile.reset_source,
+    } as NonNullable<Credential["routing_profile"]>;
+    optionalFields(profile, parsed, ["tier"], "number");
+    optionalFields(
+      profile,
+      parsed,
+      ["plan", "weekly_reset_at", "observed_at"],
+      "string",
+    );
+    if (parsed.tier !== undefined) integer(parsed.tier, 0, 1000, "Tier rank");
+    for (const date of [parsed.weekly_reset_at, parsed.observed_at])
+      if (date !== undefined && !Number.isFinite(Date.parse(date)))
+        throw new Error("Unexpected routing profile date.");
+    result.routing_profile = parsed;
+  }
   return result;
 }
 
@@ -112,7 +178,8 @@ function strategy(value: unknown): RoutingStrategy {
   if (
     value !== "round-robin" &&
     value !== "weighted-round-robin" &&
-    value !== "fill-first"
+    value !== "fill-first" &&
+    value !== "subscription-first"
   ) {
     throw new Error(
       "Unexpected management response: invalid routing strategy.",
@@ -265,6 +332,93 @@ export class ManagementApi {
         return "round-robin";
       throw error;
     }
+  }
+
+  async routingSettings(signal?: AbortSignal): Promise<RoutingSettings> {
+    try {
+      const raw = object(
+        await this.request("/config/routing", "GET", undefined, signal),
+      );
+      if (raw.strategy !== undefined) raw.strategy = readStrategy(raw.strategy);
+      return parseRouting(raw);
+    } catch (error) {
+      if (error instanceof HttpError && error.missingConfigPath)
+        return parseRouting({});
+      throw error;
+    }
+  }
+
+  async setRoutingSettings(
+    patch: Record<string, unknown>,
+  ): Promise<RoutingSettings> {
+    parseRouting(patch);
+    await this.mutate("/config/routing", "PATCH", patch);
+    const saved = await this.routingSettings();
+    // The server can normalize durations to equivalent spellings.
+    const comparable = { ...saved };
+    for (const key of [
+      "session-affinity-ttl",
+      "subscription-first-max-observation-age",
+    ]) {
+      if (
+        typeof patch[key] === "string" &&
+        durationSeconds(patch[key]) === durationSeconds(saved[key])
+      )
+        comparable[key] = patch[key];
+    }
+    if (!patchMatches(comparable, patch))
+      throw new Error(
+        "Routing write was accepted, but saved values could not be confirmed. Your draft is retained.",
+      );
+    return saved;
+  }
+
+  async setCredentialFields(
+    name: string,
+    fields: Record<string, unknown>,
+  ): Promise<Credential> {
+    const allowed = [
+      "priority",
+      "weight",
+      "routing_tier",
+      "routing_weekly_reset_at",
+    ];
+    if (
+      !Object.keys(fields).length ||
+      Object.keys(fields).some((key) => !allowed.includes(key))
+    )
+      throw new Error("Invalid account routing fields.");
+    if (fields.priority !== undefined)
+      integer(fields.priority, -2147483648, 2147483647, "Priority");
+    if (fields.weight !== undefined)
+      integer(fields.weight, 0, 1000000, "Weight");
+    if (fields.routing_tier !== undefined && fields.routing_tier !== null)
+      integer(fields.routing_tier, 0, 1000, "Tier rank");
+    const reset = fields.routing_weekly_reset_at;
+    if (
+      reset !== undefined &&
+      reset !== null &&
+      (typeof reset !== "string" ||
+        !Number.isFinite(Date.parse(reset)) ||
+        Date.parse(reset) <= Date.now())
+    )
+      throw new Error("Weekly reset must be a future date and time.");
+    await this.mutate("/credentials/fields", "PATCH", { name, ...fields });
+    const saved = (await this.credentials()).find((item) => item.name === name);
+    if (
+      !saved ||
+      !Object.entries(fields).every(([key, value]) =>
+        value === null
+          ? saved[key as keyof Credential] === undefined
+          : key === "routing_weekly_reset_at"
+            ? Date.parse(String(saved[key])) === Date.parse(String(value))
+            : saved[key as keyof Credential] === value,
+      )
+    )
+      throw new Error(
+        "Account write was accepted, but saved values could not be confirmed. Your draft is retained.",
+      );
+    return saved;
   }
 
   private async mutate(

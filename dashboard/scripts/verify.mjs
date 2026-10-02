@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 
 if (
   !process.env.DASHBOARD_PROOF_ACCESS ||
@@ -123,7 +123,62 @@ try {
   await page.getByRole("radio", { name: /Share the work/ }).check();
   await page.getByRole("button", { name: "Save changes" }).click();
   await page.getByText("Routing preference saved").waitFor();
+  await page.getByRole("radio", { name: /Use account weights/ }).check();
+  const firstAccount = page.locator(".account-routing").first();
+  await firstAccount.getByLabel("Weight (zero skips this account)").fill("3");
+  await firstAccount
+    .getByRole("button", { name: "Save account", exact: true })
+    .click();
+  await page.getByText("Account routing saved", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await page.locator(".toast").waitFor({ state: "detached" });
+  await page.getByRole("radio", { name: /Use subscription order/ }).check();
+  await firstAccount
+    .getByLabel("Tier rank (blank uses detected plan)")
+    .fill("1");
+  await firstAccount
+    .getByRole("button", { name: "Save account", exact: true })
+    .click();
+  await page.getByText("Account routing saved", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+  await page.locator(".toast").waitFor({ state: "detached" });
+  await page
+    .getByLabel("Keep a conversation on the same account", { exact: true })
+    .check();
+  await page.getByLabel("Conversation affinity lifetime").fill("2h");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.getByText("Routing preference saved", { exact: true }).waitFor();
+  await page.reload();
+  await unlock();
+  await navigate("Settings");
+  await expect(
+    page.getByRole("radio", { name: /Use subscription order/ }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("radio", { name: /Use subscription order/ }),
+  ).toBeChecked();
+  await expect(
+    page.getByLabel("Keep a conversation on the same account", { exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("Conversation affinity lifetime")).toHaveValue(
+    /^2h(?:0m)?(?:0s)?$/,
+  );
+  await expect(
+    page
+      .locator(".account-routing")
+      .first()
+      .getByLabel("Tier rank (blank uses detected plan)"),
+  ).toHaveValue("1");
   await capture("relay-settings");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await capture("relay-settings-mobile");
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth > innerWidth,
+    ),
+    false,
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page
     .getByRole("button", { name: "Connect account", exact: true })
     .click();

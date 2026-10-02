@@ -342,6 +342,7 @@ export function App() {
               <Settings
                 api={gateway.api}
                 strategy={gateway.strategy}
+                credentials={gateway.credentials}
                 onRefresh={refresh}
                 onDisconnect={disconnect}
                 notify={notify}

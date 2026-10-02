@@ -24,6 +24,7 @@ export const routingNames: Record<RoutingStrategy, string> = {
   "round-robin": "Share the work",
   "weighted-round-robin": "Use account weights",
   "fill-first": "One account at a time",
+  "subscription-first": "Use subscription order",
 };
 
 type Props = {

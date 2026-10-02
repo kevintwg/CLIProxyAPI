@@ -337,3 +337,67 @@ describe("ManagementApi", () => {
     });
   });
 });
+
+describe("routing customization", () => {
+  it("loads full routing settings and preserves unknown fields", async () => {
+    respond({
+      strategy: "subscription-first",
+      future: { enabled: true },
+      retry: { extra: 9 },
+    });
+    const settings = await api.routingSettings();
+    expect(settings.future).toEqual({ enabled: true });
+    expect(settings.retry).toMatchObject({ extra: 9, "request-retry": 0 });
+    expect(call().url).toBe("/v8/management/config/routing");
+  });
+  it.each([
+    { "session-affinity": "true" },
+    { retry: [] },
+    { "session-affinity-ttl": "forever" },
+    { retry: { "request-retry": -1 } },
+  ])("rejects malformed known settings %j", async (value) => {
+    respond(value);
+    await expect(api.routingSettings()).rejects.toThrow();
+  });
+  it("patches only edits and rejects an unpersisted success", async () => {
+    respond({ status: "ok" });
+    respond({ strategy: "round-robin" });
+    await expect(
+      api.setRoutingSettings({ strategy: "subscription-first" }),
+    ).rejects.toThrow("could not be confirmed");
+    expect(call().options.method).toBe("PATCH");
+    expect(JSON.parse(String(call().options.body))).toEqual({
+      strategy: "subscription-first",
+    });
+  });
+  it("accepts equivalent persisted duration formatting", async () => {
+    respond({ status: "ok" });
+    respond({ "session-affinity-ttl": "1h0m0s" });
+    await expect(
+      api.setRoutingSettings({ "session-affinity-ttl": "1h" }),
+    ).resolves.toBeDefined();
+  });
+  it("sends changed account fields only and verifies persistence", async () => {
+    respond({ status: "ok" });
+    respond({ files: [{ ...account, weight: 4 }] });
+    await api.setCredentialFields(account.name, { weight: 4 });
+    expect(JSON.parse(String(call().options.body))).toEqual({
+      name: account.name,
+      weight: 4,
+    });
+  });
+  it("rejects invalid account fields before requesting", async () => {
+    await expect(
+      api.setCredentialFields(account.name, { weight: -1 }),
+    ).rejects.toThrow("Weight");
+    await expect(
+      api.setCredentialFields(account.name, { routing_tier: 1001 }),
+    ).rejects.toThrow("Tier rank");
+    await expect(
+      api.setCredentialFields(account.name, {
+        routing_weekly_reset_at: "2000-01-01T00:00:00Z",
+      }),
+    ).rejects.toThrow("future");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

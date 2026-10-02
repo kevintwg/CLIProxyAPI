@@ -1871,3 +1871,60 @@ details form > button {
     border: 1px solid currentColor;
   }
 }
+
+.routing-options {
+  padding: 0 1.5rem 1.5rem;
+}
+.routing-options p,
+.account-routing p {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  margin: 0.7rem 0;
+  overflow-wrap: anywhere;
+}
+.routing-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.routing-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  min-width: 0;
+}
+.routing-fields input {
+  font-size: 1rem;
+  width: 100%;
+  min-width: 0;
+}
+.routing-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  font-size: 0.85rem;
+}
+.routing-toggle input {
+  width: 1.1rem;
+  min-height: 1.1rem;
+  flex: 0 0 1.1rem;
+}
+.account-routing {
+  padding: 1.3rem 0;
+}
+.account-routing + .account-routing {
+  border-top: 1px solid var(--line);
+}
+.account-routing > strong {
+  overflow-wrap: anywhere;
+}
+.routing-account-provider {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+}

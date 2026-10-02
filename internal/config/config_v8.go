@@ -788,5 +788,11 @@ func ValidateV8Config(data []byte) error {
 	decoder := yaml.NewDecoder(bytes.NewReader(encoded))
 	decoder.KnownFields(true)
 	var cfg legacyConfig
-	return decoder.Decode(&cfg)
+	if err := decoder.Decode(&cfg); err != nil {
+		return err
+	}
+	if err := cfg.Routing.ValidateStrategy(); err != nil {
+		return err
+	}
+	return cfg.Routing.Validate()
 }

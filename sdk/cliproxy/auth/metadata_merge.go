@@ -205,7 +205,7 @@ func mergeAuthContent(base, current, updated *Auth) *Auth {
 	// 1. Three-way merge for Metadata (excluding proxy_url which has dedicated canonical merge)
 	if updated.Metadata != nil {
 		for k, v := range updated.Metadata {
-			if strings.EqualFold(strings.TrimSpace(k), "proxy_url") {
+			if k == "routing_tier" || k == "routing_weekly_reset_at" || strings.EqualFold(strings.TrimSpace(k), "proxy_url") {
 				continue
 			}
 			baseVal, hadInBase := baseMeta[k]
@@ -224,7 +224,7 @@ func mergeAuthContent(base, current, updated *Auth) *Auth {
 		// Deletions by executor: only delete if user didn't modify the field concurrently
 		if baseMeta != nil {
 			for k, baseVal := range baseMeta {
-				if strings.EqualFold(strings.TrimSpace(k), "proxy_url") {
+				if k == "routing_tier" || k == "routing_weekly_reset_at" || strings.EqualFold(strings.TrimSpace(k), "proxy_url") {
 					continue
 				}
 				if _, inUpdated := updated.Metadata[k]; !inUpdated {
