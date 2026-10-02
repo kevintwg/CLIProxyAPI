@@ -109,8 +109,8 @@ try {
   await capture("relay-models");
   await navigate("Settings");
   await page.getByRole("radio", { name: /One account at a time/ }).check();
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await page.getByText("Routing preference saved").waitFor();
+  await page.getByRole("button", { name: "Save Relay settings" }).click();
+  await page.getByText("Relay settings saved").waitFor();
   await page.reload();
   await unlock();
   await navigate("Settings");
@@ -121,33 +121,42 @@ try {
     true,
   );
   await page.getByRole("radio", { name: /Share the work/ }).check();
-  await page.getByRole("button", { name: "Save changes" }).click();
-  await page.getByText("Routing preference saved").waitFor();
+  await page.getByRole("button", { name: "Save Relay settings" }).click();
+  await page.getByText("Relay settings saved").waitFor();
   await page.getByRole("radio", { name: /Use account weights/ }).check();
-  const firstAccount = page.locator(".account-routing").first();
+  await page.getByRole("tab", { name: /Codex/ }).click();
+  const firstAccount = page
+    .getByRole("tabpanel", { name: /Codex/ })
+    .locator(".account-routing")
+    .first();
   await firstAccount.getByLabel("Weight (zero skips this account)").fill("3");
+  await page.getByRole("tab", { name: /Claude/ }).click();
+  await page.getByRole("tab", { name: /Codex/ }).click();
   await firstAccount
     .getByRole("button", { name: "Save account", exact: true })
     .click();
   await page.getByText("Account routing saved", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await page.locator(".toast").waitFor({ state: "detached" });
+  await page.getByRole("tab", { name: "Relay" }).click();
   await page.getByRole("radio", { name: /Use subscription order/ }).check();
-  await firstAccount
-    .getByLabel("Tier rank (blank uses detected plan)")
-    .fill("1");
+  await page.getByRole("tab", { name: /Codex/ }).click();
+  await firstAccount.getByLabel("Tier rank override").fill("1");
   await firstAccount
     .getByRole("button", { name: "Save account", exact: true })
     .click();
   await page.getByText("Account routing saved", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Dismiss notification" }).click();
   await page.locator(".toast").waitFor({ state: "detached" });
+  await page.getByRole("tab", { name: "Relay" }).click();
   await page
     .getByLabel("Keep a conversation on the same account", { exact: true })
     .check();
   await page.getByLabel("Conversation affinity lifetime").fill("2h");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
-  await page.getByText("Routing preference saved", { exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "Save Relay settings", exact: true })
+    .click();
+  await page.getByText("Relay settings saved", { exact: true }).waitFor();
   await page.reload();
   await unlock();
   await navigate("Settings");
@@ -163,15 +172,24 @@ try {
   await expect(page.getByLabel("Conversation affinity lifetime")).toHaveValue(
     /^2h(?:0m)?(?:0s)?$/,
   );
+  await page.getByRole("tab", { name: /Codex/ }).click();
   await expect(
     page
+      .getByRole("tabpanel", { name: /Codex/ })
       .locator(".account-routing")
       .first()
-      .getByLabel("Tier rank (blank uses detected plan)"),
+      .getByLabel("Tier rank override"),
   ).toHaveValue("1");
   await capture("relay-settings");
   await page.setViewportSize({ width: 390, height: 844 });
   await capture("relay-settings-mobile");
+  assert.equal(
+    await page
+      .locator(".settings-tabs")
+      .evaluate((tabs) => tabs.scrollWidth > tabs.clientWidth),
+    false,
+    "Mobile settings tabs must fit without horizontal overflow",
+  );
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,

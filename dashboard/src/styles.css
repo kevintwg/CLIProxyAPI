@@ -1928,3 +1928,239 @@ details form > button {
   font-size: 0.8rem;
   margin-top: 0.3rem;
 }
+
+/* Settings keeps shared policy separate from provider account edits. */
+.settings-tabs {
+  display: flex;
+  gap: 0.3rem;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  padding: 0.25rem 0.25rem 0.65rem;
+}
+.settings-tabs [role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--secondary);
+  min-height: 2.75rem;
+  padding: 0.6rem 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.settings-tabs [aria-selected="true"] {
+  background: var(--selected-surface);
+  color: var(--accent-text);
+}
+.settings-tabs [role="tab"]:hover {
+  background: var(--surface-soft);
+}
+.settings-tab-count {
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+.settings-tab-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.settings-group {
+  border-top: 1px solid var(--line);
+  padding-top: 1.5rem;
+}
+.settings-group h3,
+.account-routing-heading h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.settings-layout .routing-choice {
+  border-radius: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-layout .routing-choice:first-of-type {
+  border-radius: 0.6rem 0.6rem 0 0;
+}
+.settings-layout .routing-choice:last-of-type {
+  border-bottom: 0;
+  border-radius: 0 0 0.6rem 0.6rem;
+}
+.settings-layout .routing-choices {
+  gap: 0;
+}
+.settings-layout .routing-choice strong {
+  font-size: 0.95rem;
+}
+.settings-layout .routing-choice small {
+  font-size: 0.875rem;
+}
+.settings-layout .routing-options p,
+.settings-layout .account-routing p,
+.settings-layout .routing-fields label,
+.settings-layout .routing-toggle,
+.settings-layout .setting-row p {
+  font-size: 0.9375rem;
+}
+.settings-layout .settings-footer > span {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.settings-text-button {
+  border: 0;
+  padding: 0.25rem 0;
+  background: transparent;
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  font: inherit;
+}
+.account-routing-list {
+  margin: 0 1.5rem 1.5rem;
+}
+.account-routing-list .account-routing {
+  padding: 1.3rem 0;
+}
+.account-routing-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.account-routing-heading > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.account-draft-status {
+  color: var(--secondary);
+  font-size: 0.875rem;
+}
+.settings-empty {
+  color: var(--muted);
+  padding: 1.5rem;
+  line-height: 1.6;
+}
+.settings-layout input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+@media (max-width: 640px) {
+  .settings-layout .routing-options p,
+  .settings-layout .account-routing p,
+  .settings-layout .routing-fields label,
+  .settings-layout .routing-toggle,
+  .settings-layout .routing-choice strong,
+  .settings-layout .setting-row p,
+  .settings-empty,
+  .settings-tabs [role="tab"],
+  .settings-layout .button {
+    font-size: 1rem;
+  }
+  .settings-layout .routing-options,
+  .settings-layout .routing-choices {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .account-routing-list {
+    margin-left: 1rem;
+    margin-right: 1rem;
+  }
+  .account-routing-list .account-routing {
+    padding: 1rem 0;
+  }
+  .settings-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.2rem;
+    overflow: visible;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .settings-tabs.has-other {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .settings-tabs [role="tab"] {
+    min-width: 0;
+    gap: 0.2rem;
+    padding: 0.6rem 0.1rem;
+    white-space: normal;
+  }
+  .settings-tabs .provider-mark.small {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 1.25rem;
+    border-radius: 0.3rem;
+  }
+  .settings-tabs .provider-mark.small img {
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-layout button:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+.routing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.routing-field-help {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.account-routing-summary {
+  margin: 1rem 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.account-routing-summary > div {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 0.75rem;
+}
+.account-routing-summary dt {
+  color: var(--secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.account-routing-summary dd {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.account-routing-summary dd strong {
+  font-weight: 550;
+}
+.account-routing-summary dd span,
+.account-routing-summary dd small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.account-order-help summary {
+  color: var(--accent-text);
+  font-size: 0.875rem;
+  cursor: pointer;
+  padding: 0.4rem 0;
+}
+.provider-settings-context p:first-child {
+  margin-top: 0;
+}
+@media (max-width: 640px) {
+  .account-routing-summary > div {
+    grid-template-columns: 6rem minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+  .account-routing-summary dd {
+    font-size: 1rem;
+  }
+}

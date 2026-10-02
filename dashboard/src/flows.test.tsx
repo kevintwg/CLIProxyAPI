@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -136,12 +136,16 @@ describe("account and routing controls", () => {
     await userEvent.click(
       screen.getByRole("radio", { name: /One account at a time/ }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Save Relay settings" }),
+    );
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Your draft is retained",
     );
     expect(notify).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Save Relay settings" }),
+    ).toBeEnabled();
   });
 });
 
@@ -312,6 +316,7 @@ describe("account routing drafts", () => {
         notify={notify}
       />,
     );
+    await userEvent.click(screen.getByRole("tab", { name: /Claude/ }));
     const weights = await screen.findAllByLabelText(
       "Weight (zero skips this account)",
     );
@@ -366,7 +371,9 @@ describe("account routing drafts", () => {
     expect(
       screen.getByRole("radio", { name: /Use subscription order/ }),
     ).toBeChecked();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Save Relay settings" }),
+    ).toBeEnabled();
   });
 });
 
@@ -393,7 +400,9 @@ it("refreshes global routing settings when there are no unsaved edits", async ()
       screen.getByRole("radio", { name: /Use subscription order/ }),
     ).toBeChecked(),
   );
-  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Save Relay settings" }),
+  ).toBeDisabled();
 });
 
 it("displays omitted retry values as zero and saves explicit rounds and wait", async () => {
@@ -429,10 +438,200 @@ it("displays omitted retry values as zero and saves explicit rounds and wait", a
   await userEvent.type(rounds, "3");
   await userEvent.clear(interval);
   await userEvent.type(interval, "30");
-  await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Save Relay settings" }),
+  );
   await waitFor(() =>
     expect(api.setRoutingSettings).toHaveBeenCalledWith({
       retry: { "request-retry": 3, "max-retry-interval": 30 },
     }),
   );
+});
+
+it("separates providers, supports tab keys and retains drafts and scoped errors", async () => {
+  const api = new ManagementApi("test-key");
+  vi.spyOn(api, "routingSettings").mockResolvedValue(parseRouting({}));
+  const saveAccount = vi
+    .spyOn(api, "setCredentialFields")
+    .mockRejectedValue(new Error("account write failed"));
+  const saveRelay = vi.spyOn(api, "setRoutingSettings");
+  const codex = {
+    ...account,
+    name: "codex.json",
+    id: "codex",
+    provider: "codex",
+    label: "Codex fixture",
+  };
+  const props = {
+    api,
+    strategy: "subscription-first" as const,
+    credentials: [account, codex],
+    onRefresh: vi.fn(),
+    onDisconnect: vi.fn(),
+    notify: vi.fn(),
+  };
+  const view = render(<Settings {...props} />);
+  const relayTab = screen.getByRole("tab", { name: "Relay" });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("radio", { name: /Use subscription order/ }),
+    ).toBeEnabled(),
+  );
+  await userEvent.click(
+    screen.getByRole("radio", { name: /Use subscription order/ }),
+  );
+  await userEvent.click(
+    screen.getByLabelText("Keep a conversation on the same account", {
+      exact: true,
+    }),
+  );
+  relayTab.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(screen.getByRole("tab", { name: /Codex/ })).toHaveFocus();
+  expect(screen.getByRole("tab", { name: /Codex/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.getByRole("heading", { name: "Codex fixture" })).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Test account" }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("tabpanel", { name: /Codex/ })).getByText(
+      /unsaved strategy/,
+    ),
+  ).toBeVisible();
+  const rank = within(
+    screen.getByRole("tabpanel", { name: /Codex/ }),
+  ).getByLabelText("Tier rank override");
+  await userEvent.type(rank, "2");
+  await userEvent.click(screen.getByRole("button", { name: "Save account" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "account write failed",
+  );
+  expect(saveAccount).toHaveBeenCalledWith("codex.json", { routing_tier: 2 });
+  expect(saveRelay).not.toHaveBeenCalled();
+  screen.getByRole("tab", { name: /Codex/ }).focus();
+  await userEvent.keyboard("{End}");
+  expect(screen.getByRole("tab", { name: /Claude/ })).toHaveFocus();
+  expect(
+    within(screen.getByRole("tabpanel")).getByLabelText("Tier rank override"),
+  ).toHaveValue(null);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    within(screen.getByRole("tabpanel", { name: /Claude/ })).getByText(
+      "Unknown, used last",
+      { exact: false },
+    ),
+  ).toBeVisible();
+  view.rerender(
+    <Settings
+      {...props}
+      credentials={[{ ...account }, { ...codex, routing_tier: 9 }]}
+    />,
+  );
+  await userEvent.click(screen.getByRole("tab", { name: /Codex/ }));
+  expect(rank).toHaveValue(2);
+  expect(screen.getByRole("alert")).toHaveTextContent("Your draft is retained");
+  screen.getByRole("tab", { name: /Codex/ }).focus();
+  await userEvent.keyboard("{Home}");
+  expect(relayTab).toHaveFocus();
+  expect(
+    screen.getByRole("button", { name: "Save Relay settings" }),
+  ).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("tab", { name: /Claude/ })).toHaveFocus();
+});
+
+it("keeps other providers reachable and runtime-only account fields disabled", async () => {
+  const api = new ManagementApi("test-key");
+  vi.spyOn(api, "routingSettings").mockResolvedValue(
+    parseRouting({ strategy: "subscription-first" }),
+  );
+  render(
+    <Settings
+      api={api}
+      strategy="subscription-first"
+      credentials={[
+        {
+          ...account,
+          provider: "gemini",
+          runtime_only: true,
+          routing_profile: {
+            tier_source: "unknown",
+            reset_source: "observed",
+            weekly_reset_at: "2000-01-01T00:00:00Z",
+            observed_at: "2000-01-01T00:00:00Z",
+          },
+        },
+      ]}
+      onRefresh={vi.fn()}
+      onDisconnect={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("tab", { name: /Other accounts/ }));
+  expect(
+    within(screen.getByRole("tabpanel")).getByLabelText("Tier rank override"),
+  ).toBeDisabled();
+  expect(
+    within(screen.getByRole("tabpanel")).getByLabelText(
+      "Weekly reset override",
+    ),
+  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save account" })).toBeDisabled();
+  expect(screen.getByText(/No usable future reset/)).toBeVisible();
+});
+
+it("distinguishes stale provider resets from usable manual resets", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
+  const api = new ManagementApi("test-key");
+  vi.spyOn(api, "routingSettings").mockResolvedValue(
+    parseRouting({ strategy: "subscription-first" }),
+  );
+  render(
+    <Settings
+      api={api}
+      strategy="subscription-first"
+      credentials={[
+        {
+          ...account,
+          routing_profile: {
+            tier: 2,
+            tier_source: "manual",
+            reset_source: "observed",
+            weekly_reset_at: "2030-01-02T00:00:00Z",
+            observed_at: "2029-01-01T00:00:00Z",
+          },
+        },
+        {
+          ...account,
+          name: "manual.json",
+          id: "manual",
+          label: "Manual reset fixture",
+          routing_profile: {
+            tier: 2,
+            tier_source: "manual",
+            reset_source: "manual",
+            weekly_reset_at: "2030-01-02T00:00:00Z",
+          },
+        },
+      ]}
+      onRefresh={vi.fn()}
+      onDisconnect={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("tab", { name: /Claude/ }));
+  expect(
+    within(
+      screen.getByRole("region", { name: "Test account routing" }),
+    ).getByText(/Stale, ignored/),
+  ).toBeVisible();
+  expect(
+    within(
+      screen.getByRole("region", { name: "Manual reset fixture routing" }),
+    ).getByText("Usable for ordering"),
+  ).toBeVisible();
 });

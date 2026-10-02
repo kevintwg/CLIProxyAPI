@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Credential, ManagementApi, RoutingStrategy } from "./api";
+import { ProviderMark, providerName } from "./ui";
 import { durationSeconds, integer } from "./routing";
 
 function localDate(value?: string): string {
@@ -33,6 +34,7 @@ export function AccountRouting({
   onRefresh: () => Promise<void>;
   notify: (text: string) => void;
 }) {
+  const fieldId = useId();
   const [base, setBase] = useState(() => draftFor(account));
   const [draft, setDraft] = useState(base);
   const [busy, setBusy] = useState(false);
@@ -104,62 +106,111 @@ export function AccountRouting({
     min?: number,
     max?: number,
   ) {
+    const helper =
+      key === "tier"
+        ? account.provider === "codex"
+          ? "Leave blank to use the detected Codex plan."
+          : "Leave blank for unknown rank, used last."
+        : key === "reset"
+          ? "Leave blank to use provider reset observations."
+          : undefined;
+    const id = `${fieldId}-${key}`;
     return (
-      <label>
-        {label}
+      <div className="routing-field">
+        <label htmlFor={id}>{label}</label>
         <input
+          id={id}
+          aria-describedby={helper ? `${id}-help` : undefined}
           type={type}
           min={min}
           max={max}
           step={type === "number" ? 1 : undefined}
           value={draft[key]}
-          disabled={busy}
+          disabled={busy || account.runtime_only}
           onChange={(event) =>
             setDraft({ ...draft, [key]: event.target.value })
           }
         />
-      </label>
+        {helper && (
+          <small id={`${id}-help`} className="routing-field-help">
+            {helper}
+          </small>
+        )}
+      </div>
     );
   }
   return (
-    <div className="account-routing">
-      <strong>{account.label || account.email || account.name}</strong>
-      <span className="routing-account-provider">{account.provider}</span>
+    <section
+      className="account-routing"
+      aria-label={`${account.label || account.email || account.name} routing`}
+    >
+      <div className="account-routing-heading">
+        <ProviderMark provider={account.provider} small />
+        <div>
+          <h3>{account.label || account.email || account.name}</h3>
+          <span className="routing-account-provider">
+            {account.provider === "codex"
+              ? "Codex"
+              : providerName(account.provider)}
+          </span>
+        </div>
+        {dirty && <span className="account-draft-status">Unsaved</span>}
+      </div>
+      {account.runtime_only && (
+        <p>
+          This runtime-only account cannot be edited here. Manage its routing in
+          the source configuration.
+        </p>
+      )}
       {strategy === "subscription-first" ? (
         <>
-          <p>
-            Tier {profile?.tier ?? "unknown"} (
-            {profile?.tier_source ?? "unknown"})
-            {profile?.plan ? ` · ${profile.plan}` : ""}. Unknown tiers are used
-            last.
-          </p>
-          <p>
-            Weekly reset:{" "}
-            {profile?.weekly_reset_at
-              ? new Date(profile.weekly_reset_at).toLocaleString()
-              : "unknown"}{" "}
-            ({profile?.reset_source ?? "unknown"}).{" "}
-            {!future
-              ? "No future reset available."
-              : !fresh
-                ? "Observation is stale and ignored."
-                : "Available for ordering."}
-            {profile?.observed_at &&
-              ` Observed ${new Date(profile.observed_at).toLocaleString()}.`}
-          </p>
+          <dl className="account-routing-summary">
+            <div>
+              <dt>Saved tier rank</dt>
+              <dd>
+                <strong>
+                  {profile?.tier === undefined
+                    ? "Unknown, used last"
+                    : profile.tier}
+                </strong>
+                <span>
+                  {profile?.tier_source === "manual"
+                    ? "Manual rank"
+                    : profile?.tier_source === "plan"
+                      ? `Detected plan${profile.plan ? `: ${profile.plan}` : ""}`
+                      : "No tier information"}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>Weekly reset</dt>
+              <dd>
+                <strong>
+                  {!future
+                    ? "No usable future reset"
+                    : !fresh
+                      ? "Stale, ignored"
+                      : "Usable for ordering"}
+                </strong>
+                <span>
+                  {profile?.reset_source === "manual"
+                    ? "Saved manual reset"
+                    : "Provider observation"}
+                  {profile?.weekly_reset_at
+                    ? ` · ${new Date(profile.weekly_reset_at).toLocaleString()}`
+                    : " · Unknown"}
+                </span>
+                {profile?.observed_at && (
+                  <small>
+                    Observed {new Date(profile.observed_at).toLocaleString()}
+                  </small>
+                )}
+              </dd>
+            </div>
+          </dl>
           <div className="routing-fields">
-            {field(
-              "tier",
-              "Tier rank (blank uses detected plan)",
-              "number",
-              0,
-              1000,
-            )}
-            {field(
-              "reset",
-              "Weekly reset (blank uses observed)",
-              "datetime-local",
-            )}
+            {field("tier", "Tier rank override", "number", 0, 1000)}
+            {field("reset", "Weekly reset override", "datetime-local")}
           </div>
         </>
       ) : (
@@ -193,6 +244,6 @@ export function AccountRouting({
       >
         {busy ? "Saving…" : "Save account"}
       </button>
-    </div>
+    </section>
   );
 }
