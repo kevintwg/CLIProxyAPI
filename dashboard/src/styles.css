@@ -1930,16 +1930,6 @@ details form > button {
 }
 
 /* Settings keeps shared policy separate from provider account edits. */
-.settings-intro h2 {
-  font-size: 1.5rem;
-  letter-spacing: -0.025em;
-  line-height: 1.2;
-}
-.settings-intro p {
-  color: var(--muted);
-  margin-top: 0.6rem;
-  line-height: 1.6;
-}
 .settings-tabs {
   display: flex;
   gap: 0.3rem;
@@ -2031,12 +2021,9 @@ details form > button {
 }
 .account-routing-list {
   margin: 0 1.5rem 1.5rem;
-  border: 1px solid var(--line);
-  border-radius: 0.75rem;
-  overflow: hidden;
 }
 .account-routing-list .account-routing {
-  padding: 1.3rem;
+  padding: 1.3rem 0;
 }
 .account-routing-heading {
   display: flex;
@@ -2068,7 +2055,6 @@ details form > button {
   .settings-layout .routing-toggle,
   .settings-layout .routing-choice strong,
   .settings-layout .setting-row p,
-  .settings-intro p,
   .settings-empty,
   .settings-tabs [role="tab"],
   .settings-layout .button {
@@ -2084,15 +2070,97 @@ details form > button {
     margin-right: 1rem;
   }
   .account-routing-list .account-routing {
-    padding: 1rem;
+    padding: 1rem 0;
+  }
+  .settings-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.2rem;
+    overflow: visible;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .settings-tabs.has-other {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .settings-tabs [role="tab"] {
-    gap: 0.4rem;
-    padding: 0.6rem;
+    min-width: 0;
+    gap: 0.2rem;
+    padding: 0.6rem 0.1rem;
+    white-space: normal;
+  }
+  .settings-tabs .provider-mark.small {
+    width: 1.25rem;
+    height: 1.25rem;
+    flex: 0 0 1.25rem;
+    border-radius: 0.3rem;
+  }
+  .settings-tabs .provider-mark.small img {
+    width: 0.9rem;
+    height: 0.9rem;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-layout button:active:not(:disabled) {
     transform: none;
+  }
+}
+
+.routing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.routing-field-help {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.account-routing-summary {
+  margin: 1rem 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.account-routing-summary > div {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 0.75rem;
+}
+.account-routing-summary dt {
+  color: var(--secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.account-routing-summary dd {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+.account-routing-summary dd strong {
+  font-weight: 550;
+}
+.account-routing-summary dd span,
+.account-routing-summary dd small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.account-order-help summary {
+  color: var(--accent-text);
+  font-size: 0.875rem;
+  cursor: pointer;
+  padding: 0.4rem 0;
+}
+.provider-settings-context p:first-child {
+  margin-top: 0;
+}
+@media (max-width: 640px) {
+  .account-routing-summary > div {
+    grid-template-columns: 6rem minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+  .account-routing-summary dd {
+    font-size: 1rem;
   }
 }

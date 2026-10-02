@@ -181,14 +181,8 @@ export function Settings({
   }
   return (
     <div className="settings-layout">
-      <div className="settings-intro">
-        <h2>Settings</h2>
-        <p>
-          Configure Relay once. Fine-tune each provider’s accounts separately.
-        </p>
-      </div>
       <div
-        className="settings-tabs"
+        className={`settings-tabs ${tabs.length > 3 ? "has-other" : ""}`}
         role="tablist"
         aria-label="Settings sections"
       >
@@ -441,7 +435,7 @@ export function Settings({
             <section className="panel settings-panel">
               <SectionHeading
                 title={`${group.label} accounts`}
-                subtitle="Each account saves independently. These controls do not change your shared Relay settings."
+                subtitle="Account edits save separately from Relay preferences."
               />
               <div className="routing-options provider-settings-context">
                 <p>
@@ -458,17 +452,32 @@ export function Settings({
                   <>
                     <p>
                       {group.id === "codex"
-                        ? "Automatic Codex ranks: Free 0, Go 1, Plus 2, Pro 3. Leave the manual rank blank to use the detected plan, or enter a rank to override it."
+                        ? "Detected plans set ranks automatically. Overrides are optional."
                         : group.id === "claude"
-                          ? "Claude needs a manual tier rank. A blank rank is unknown and used last."
-                          : "Set a manual tier rank when no plan is detected. Unknown ranks are used last."}
+                          ? "Enter tier ranks manually. Blank ranks are unknown and used last."
+                          : "Enter a manual rank when no plan is detected."}
                     </p>
-                    <p>
-                      Lower ranks are preferred within each provider. With
-                      weekly reset preference enabled, equal ranks use the
-                      earliest usable reset. Provider observations come from
-                      request traffic; stale or past resets are ignored.
-                    </p>
+                    <details className="account-order-help">
+                      <summary>How account order works</summary>
+                      <p>
+                        {group.id === "codex"
+                          ? "Codex ranks: Free 0, Go 1, Plus 2, Pro 3. A blank override uses the detected plan."
+                          : group.id === "claude"
+                            ? "Claude requires a manual tier rank. A blank rank is unknown and used last."
+                            : "Unknown ranks are used last."}
+                      </p>
+                      <p>
+                        Lower ranks are preferred within each provider. With
+                        weekly reset preference enabled, equal ranks use the
+                        earliest usable reset.
+                      </p>
+                      <p>
+                        Provider observations come from request traffic. Stale
+                        or past resets are ignored. There is no quota polling. A
+                        future manual reset overrides provider observations;
+                        clear it to use observations again.
+                      </p>
+                    </details>
                   </>
                 )}
               </div>

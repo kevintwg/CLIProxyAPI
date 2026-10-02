@@ -501,9 +501,9 @@ it("separates providers, supports tab keys and retains drafts and scoped errors"
       /unsaved strategy/,
     ),
   ).toBeVisible();
-  const rank = screen.getByLabelText(
-    "Manual tier rank (blank uses detected plan)",
-  );
+  const rank = within(
+    screen.getByRole("tabpanel", { name: /Codex/ }),
+  ).getByLabelText("Tier rank override");
   await userEvent.type(rank, "2");
   await userEvent.click(screen.getByRole("button", { name: "Save account" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -515,12 +515,12 @@ it("separates providers, supports tab keys and retains drafts and scoped errors"
   await userEvent.keyboard("{End}");
   expect(screen.getByRole("tab", { name: /Claude/ })).toHaveFocus();
   expect(
-    screen.getByLabelText("Manual tier rank (blank means unknown)"),
+    within(screen.getByRole("tabpanel")).getByLabelText("Tier rank override"),
   ).toHaveValue(null);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(
     within(screen.getByRole("tabpanel", { name: /Claude/ })).getByText(
-      "Tier rank unknown. Used last.",
+      "Unknown, used last",
       { exact: false },
     ),
   ).toBeVisible();
@@ -573,11 +573,11 @@ it("keeps other providers reachable and runtime-only account fields disabled", a
   );
   await userEvent.click(screen.getByRole("tab", { name: /Other accounts/ }));
   expect(
-    screen.getByLabelText("Manual tier rank (blank means unknown)"),
+    within(screen.getByRole("tabpanel")).getByLabelText("Tier rank override"),
   ).toBeDisabled();
   expect(
-    screen.getByLabelText(
-      "Manual weekly reset (blank uses provider observation)",
+    within(screen.getByRole("tabpanel")).getByLabelText(
+      "Weekly reset override",
     ),
   ).toBeDisabled();
   expect(screen.getByRole("button", { name: "Save account" })).toBeDisabled();
@@ -627,11 +627,11 @@ it("distinguishes stale provider resets from usable manual resets", async () => 
   expect(
     within(
       screen.getByRole("region", { name: "Test account routing" }),
-    ).getByText(/Observation is stale and ignored/),
+    ).getByText(/Stale, ignored/),
   ).toBeVisible();
   expect(
     within(
       screen.getByRole("region", { name: "Manual reset fixture routing" }),
-    ).getByText(/Saved manual reset/),
-  ).toHaveTextContent("Available for ordering");
+    ).getByText("Usable for ordering"),
+  ).toBeVisible();
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Credential, ManagementApi, RoutingStrategy } from "./api";
 import { ProviderMark, providerName } from "./ui";
 import { durationSeconds, integer } from "./routing";
@@ -34,6 +34,7 @@ export function AccountRouting({
   onRefresh: () => Promise<void>;
   notify: (text: string) => void;
 }) {
+  const fieldId = useId();
   const [base, setBase] = useState(() => draftFor(account));
   const [draft, setDraft] = useState(base);
   const [busy, setBusy] = useState(false);
@@ -105,10 +106,21 @@ export function AccountRouting({
     min?: number,
     max?: number,
   ) {
+    const helper =
+      key === "tier"
+        ? account.provider === "codex"
+          ? "Leave blank to use the detected Codex plan."
+          : "Leave blank for unknown rank, used last."
+        : key === "reset"
+          ? "Leave blank to use provider reset observations."
+          : undefined;
+    const id = `${fieldId}-${key}`;
     return (
-      <label>
-        {label}
+      <div className="routing-field">
+        <label htmlFor={id}>{label}</label>
         <input
+          id={id}
+          aria-describedby={helper ? `${id}-help` : undefined}
           type={type}
           min={min}
           max={max}
@@ -119,7 +131,12 @@ export function AccountRouting({
             setDraft({ ...draft, [key]: event.target.value })
           }
         />
-      </label>
+        {helper && (
+          <small id={`${id}-help`} className="routing-field-help">
+            {helper}
+          </small>
+        )}
+      </div>
     );
   }
   return (
@@ -147,48 +164,53 @@ export function AccountRouting({
       )}
       {strategy === "subscription-first" ? (
         <>
-          <p>
-            {profile?.tier === undefined
-              ? "Tier rank unknown. Used last."
-              : `Effective tier rank: ${profile.tier}.`}{" "}
-            {profile?.tier_source === "manual"
-              ? "Saved manual override."
-              : profile?.tier_source === "plan"
-                ? `Detected plan${profile.plan ? `: ${profile.plan}` : ""}.`
-                : "No tier information available."}
-          </p>
-          <p>
-            {profile?.reset_source === "manual"
-              ? "Saved manual reset"
-              : "Provider reset observation"}
-            :{" "}
-            {profile?.weekly_reset_at
-              ? new Date(profile.weekly_reset_at).toLocaleString()
-              : "unknown"}
-            .{" "}
-            {!future
-              ? "No usable future reset. Ignored for ordering."
-              : !fresh
-                ? "Observation is stale and ignored."
-                : "Available for ordering."}
-            {profile?.observed_at &&
-              ` Observed ${new Date(profile.observed_at).toLocaleString()}.`}
-          </p>
+          <dl className="account-routing-summary">
+            <div>
+              <dt>Saved tier rank</dt>
+              <dd>
+                <strong>
+                  {profile?.tier === undefined
+                    ? "Unknown, used last"
+                    : profile.tier}
+                </strong>
+                <span>
+                  {profile?.tier_source === "manual"
+                    ? "Manual rank"
+                    : profile?.tier_source === "plan"
+                      ? `Detected plan${profile.plan ? `: ${profile.plan}` : ""}`
+                      : "No tier information"}
+                </span>
+              </dd>
+            </div>
+            <div>
+              <dt>Weekly reset</dt>
+              <dd>
+                <strong>
+                  {!future
+                    ? "No usable future reset"
+                    : !fresh
+                      ? "Stale, ignored"
+                      : "Usable for ordering"}
+                </strong>
+                <span>
+                  {profile?.reset_source === "manual"
+                    ? "Saved manual reset"
+                    : "Provider observation"}
+                  {profile?.weekly_reset_at
+                    ? ` · ${new Date(profile.weekly_reset_at).toLocaleString()}`
+                    : " · Unknown"}
+                </span>
+                {profile?.observed_at && (
+                  <small>
+                    Observed {new Date(profile.observed_at).toLocaleString()}
+                  </small>
+                )}
+              </dd>
+            </div>
+          </dl>
           <div className="routing-fields">
-            {field(
-              "tier",
-              account.provider === "codex"
-                ? "Manual tier rank (blank uses detected plan)"
-                : "Manual tier rank (blank means unknown)",
-              "number",
-              0,
-              1000,
-            )}
-            {field(
-              "reset",
-              "Manual weekly reset (blank uses provider observation)",
-              "datetime-local",
-            )}
+            {field("tier", "Tier rank override", "number", 0, 1000)}
+            {field("reset", "Weekly reset override", "datetime-local")}
           </div>
         </>
       ) : (

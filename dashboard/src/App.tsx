@@ -50,7 +50,7 @@ const pages = {
   },
   settings: {
     title: "Settings",
-    description: "Make the gateway work the way you do.",
+    description: "Shared Relay preferences and provider account settings.",
     icon: Settings2,
   },
 };

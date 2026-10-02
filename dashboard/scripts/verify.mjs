@@ -141,9 +141,7 @@ try {
   await page.getByRole("tab", { name: "Relay" }).click();
   await page.getByRole("radio", { name: /Use subscription order/ }).check();
   await page.getByRole("tab", { name: /Codex/ }).click();
-  await firstAccount
-    .getByLabel("Manual tier rank (blank uses detected plan)")
-    .fill("1");
+  await firstAccount.getByLabel("Tier rank override").fill("1");
   await firstAccount
     .getByRole("button", { name: "Save account", exact: true })
     .click();
@@ -180,11 +178,18 @@ try {
       .getByRole("tabpanel", { name: /Codex/ })
       .locator(".account-routing")
       .first()
-      .getByLabel("Manual tier rank (blank uses detected plan)"),
+      .getByLabel("Tier rank override"),
   ).toHaveValue("1");
   await capture("relay-settings");
   await page.setViewportSize({ width: 390, height: 844 });
   await capture("relay-settings-mobile");
+  assert.equal(
+    await page
+      .locator(".settings-tabs")
+      .evaluate((tabs) => tabs.scrollWidth > tabs.clientWidth),
+    false,
+    "Mobile settings tabs must fit without horizontal overflow",
+  );
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,
