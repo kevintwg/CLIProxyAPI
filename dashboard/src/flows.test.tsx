@@ -5,6 +5,7 @@ import { App } from "./App";
 import { Accounts } from "./Accounts";
 import { ConnectAccount } from "./ConnectAccount";
 import { Models } from "./Models";
+import { parseRouting } from "./routing";
 import { Settings } from "./Settings";
 import { ManagementApi, type Credential } from "./api";
 
@@ -27,7 +28,11 @@ it("connects a gateway whose persisted routing uses a supported alias", async ()
       async (url: string) =>
         new Response(
           JSON.stringify(
-            url.endsWith("/credentials") ? { files: [account] } : "ff",
+            url.endsWith("/credentials")
+              ? { files: [account] }
+              : url.endsWith("/config/routing")
+                ? { strategy: "ff" }
+                : "ff",
           ),
         ),
     ),
@@ -46,7 +51,7 @@ it("connects a gateway whose persisted routing uses a supported alias", async ()
   ).toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Settings" }));
   expect(
-    screen.getByRole("radio", { name: /One account at a time/ }),
+    await screen.findByRole("radio", { name: /One account at a time/ }),
   ).toBeChecked();
 });
 
@@ -109,7 +114,8 @@ describe("account and routing controls", () => {
 
   it("keeps routing edits unsaved when the server rejects a write", async () => {
     const api = new ManagementApi("test-key");
-    vi.spyOn(api, "setRouting").mockRejectedValue(
+    vi.spyOn(api, "routingSettings").mockResolvedValue(parseRouting({}));
+    vi.spyOn(api, "setRoutingSettings").mockRejectedValue(
       new Error("Could not persist configuration"),
     );
     const notify = vi.fn();
@@ -122,12 +128,17 @@ describe("account and routing controls", () => {
         notify={notify}
       />,
     );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("radio", { name: /One account at a time/ }),
+      ).toBeEnabled(),
+    );
     await userEvent.click(
       screen.getByRole("radio", { name: /One account at a time/ }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not persist configuration",
+      "Your draft is retained",
     );
     expect(notify).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
@@ -266,4 +277,121 @@ describe("provider sign-in", () => {
     unmount();
     expect(api.cancelLogin).not.toHaveBeenCalled();
   });
+});
+
+describe("account routing drafts", () => {
+  it("retains a failed account draft independently of another saved account", async () => {
+    const api = new ManagementApi("test-key");
+    vi.spyOn(api, "routingSettings").mockResolvedValue(
+      parseRouting({ strategy: "weighted-round-robin" }),
+    );
+    vi.spyOn(api, "setCredentialFields")
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockResolvedValueOnce({
+        ...account,
+        name: "second.json",
+        id: "second",
+        weight: 3,
+      });
+    const notify = vi.fn();
+    render(
+      <Settings
+        api={api}
+        strategy="weighted-round-robin"
+        credentials={[
+          account,
+          {
+            ...account,
+            id: "second",
+            name: "second.json",
+            label: "Second account",
+          },
+        ]}
+        onRefresh={vi.fn().mockResolvedValue(undefined)}
+        onDisconnect={vi.fn()}
+        notify={notify}
+      />,
+    );
+    const weights = await screen.findAllByLabelText(
+      "Weight (zero skips this account)",
+    );
+    await userEvent.clear(weights[0]!);
+    await userEvent.type(weights[0]!, "2");
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Save account" })[0]!,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your draft is retained",
+    );
+    await userEvent.clear(weights[1]!);
+    await userEvent.type(weights[1]!, "3");
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Save account" })[1]!,
+    );
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith("Account routing saved"),
+    );
+    expect(weights[0]).toHaveValue(2);
+    expect(
+      screen.getAllByRole("button", { name: "Save account" })[0],
+    ).toBeEnabled();
+  });
+  it("keeps unsaved global edits across a credential refresh", async () => {
+    const api = new ManagementApi("test-key");
+    vi.spyOn(api, "routingSettings").mockResolvedValue(parseRouting({}));
+    const props = {
+      api,
+      strategy: "round-robin" as const,
+      credentials: [account],
+      onRefresh: vi.fn(),
+      onDisconnect: vi.fn(),
+      notify: vi.fn(),
+    };
+    const view = render(<Settings {...props} />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("radio", { name: /Use subscription order/ }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(
+      screen.getByRole("radio", { name: /Use subscription order/ }),
+    );
+    view.rerender(
+      <Settings
+        {...props}
+        strategy="fill-first"
+        credentials={[{ ...account, weight: 8 }]}
+      />,
+    );
+    expect(
+      screen.getByRole("radio", { name: /Use subscription order/ }),
+    ).toBeChecked();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  });
+});
+
+it("refreshes global routing settings when there are no unsaved edits", async () => {
+  const api = new ManagementApi("test-key");
+  vi.spyOn(api, "routingSettings")
+    .mockResolvedValueOnce(parseRouting({}))
+    .mockResolvedValueOnce(parseRouting({ strategy: "subscription-first" }));
+  const props = {
+    api,
+    strategy: "round-robin" as const,
+    credentials: [account],
+    onRefresh: vi.fn(),
+    onDisconnect: vi.fn(),
+    notify: vi.fn(),
+  };
+  const view = render(<Settings {...props} />);
+  await waitFor(() =>
+    expect(screen.getByRole("radio", { name: /Share the work/ })).toBeEnabled(),
+  );
+  view.rerender(<Settings {...props} credentials={[{ ...account }]} />);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("radio", { name: /Use subscription order/ }),
+    ).toBeChecked(),
+  );
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
 });

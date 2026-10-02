@@ -506,7 +506,7 @@ func getSelectorAvailableAuthsWithPriorityMode(ctx context.Context, auths []*Aut
 			// The manager already resolved each credential's upstream model and supplied
 			// ID-sorted candidates. Rechecking the alias or an empty model would apply
 			// unrelated cooldowns. Affinity bindings may span all priority tiers, but
-			// fallback selection must still use the highest available tier.
+			// conventional fallback selection uses the highest available tier.
 			if !allPriorities {
 				return highestPriorityAuths(auths), nil
 			}
@@ -1019,7 +1019,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		availabilityCandidates = positiveWeightAuths(auths)
 	}
 	if primaryID == "" {
-		fallbackAuths, errAvailable := getSelectorAvailableAuths(ctx, availabilityCandidates, provider, model, now)
+		fallbackAuths, errAvailable := getSelectorAvailableAuthsWithPriorityMode(ctx, availabilityCandidates, provider, model, now, selectorUsesSubscriptionFirst(s.fallback))
 		if errAvailable != nil {
 			return nil, errAvailable
 		}
@@ -1028,12 +1028,15 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	}
 
 	// A single availability pass serves both lookups: the bound credential is validated against
-	// every priority tier, while the fallback selector keeps seeing only the highest tier.
+	// every priority tier. Subscription-first also ranks across tiers for cold/failover picks.
 	available, err := getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, now)
 	if err != nil {
 		return nil, err
 	}
 	fallbackAuths := highestPriorityAuths(available)
+	if selectorUsesSubscriptionFirst(s.fallback) {
+		fallbackAuths = available
+	}
 
 	modelKey := canonicalModelKey(model)
 	cacheKey := provider + "::" + primaryID + "::" + modelKey
@@ -1187,6 +1190,9 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	}
 
 	fallbackAuths := highestPriorityAuths(available)
+	if selectorUsesSubscriptionFirst(s.fallback) {
+		fallbackAuths = available
+	}
 	auth, errPick := s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
 	if errPick != nil {
 		return nil, true, errPick

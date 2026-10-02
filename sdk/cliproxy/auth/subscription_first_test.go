@@ -1,0 +1,197 @@
+package auth
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+)
+
+func TestSubscriptionFirstRanking(t *testing.T) {
+	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	selector := &SubscriptionFirstSelector{nowFunc: func() time.Time { return now }}
+	a := &Auth{ID: "a", Provider: "codex", Metadata: map[string]any{"routing_tier": 2, "routing_weekly_reset_at": now.Add(time.Hour).Format(time.RFC3339)}, Attributes: map[string]string{"priority": "99"}}
+	b := &Auth{ID: "b", Provider: "codex", Metadata: map[string]any{"routing_tier": 1, "routing_weekly_reset_at": now.Add(2 * time.Hour).Format(time.RFC3339)}}
+	pick := func(want string) {
+		t.Helper()
+		got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, []*Auth{a, b})
+		if err != nil || got.ID != want {
+			t.Fatalf("pick=%v err=%v want=%s", got, err, want)
+		}
+	}
+	pick("b") // Tier dominates both reset and conventional priority.
+	a.Metadata["routing_tier"] = 1
+	pick("a")
+	a.Metadata["routing_weekly_reset_at"] = now.Add(-time.Hour).Format(time.RFC3339)
+	pick("b")
+	noReset := false
+	selector.PreferWeeklyReset = &noReset
+	pick("a")
+	a.Disabled = true
+	pick("b")
+	a.Disabled = false
+	a.Unavailable = true
+	a.NextRetryAfter = now.Add(time.Hour)
+	a.Quota = QuotaState{Exceeded: true, NextRecoverAt: now.Add(time.Hour)}
+	pick("b")
+}
+
+func TestSubscriptionRoutingProfileObservations(t *testing.T) {
+	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	future := now.Add(time.Hour)
+	for _, tt := range []struct {
+		name, provider, window, reset string
+		age                           time.Duration
+		want                          bool
+	}{
+		{"codex-weekly", "codex", "10080", strconv.FormatInt(future.Unix(), 10), time.Minute, true},
+		{"codex-hourly", "codex", "300", strconv.FormatInt(future.Unix(), 10), time.Minute, false},
+		{"stale", "codex", "10080", strconv.FormatInt(future.Unix(), 10), time.Hour, false},
+		{"missing", "codex", "10080", "", time.Minute, false},
+		{"past", "codex", "10080", strconv.FormatInt(now.Add(-time.Hour).Unix(), 10), time.Minute, false},
+		{"future-observation", "codex", "10080", strconv.FormatInt(future.Unix(), 10), -time.Minute, false},
+		{"claude-weekly", "claude", "", future.Format(time.RFC3339), time.Minute, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &Auth{Provider: tt.provider, Quota: QuotaState{ObservedAt: now.Add(-tt.age), NextRecoverAt: future, Signals: map[string]string{"X-Codex-Secondary-Window-Minutes": tt.window, "X-Codex-Secondary-Reset-At": tt.reset, "Anthropic-Ratelimit-Unified-7d-Reset": tt.reset}}}
+			p := SubscriptionRoutingProfile(a, now, 30*time.Minute)
+			if (p.WeeklyResetAt != "") != tt.want {
+				t.Fatalf("profile=%+v wantReset=%v", p, tt.want)
+			}
+			if p.Tier != nil {
+				t.Fatalf("unexpected inferred tier: %+v", p)
+			}
+		})
+	}
+	a := &Auth{Provider: "codex", Metadata: map[string]any{"plan_type": "pro", "routing_tier": 0, "routing_weekly_reset_at": future.Format(time.RFC3339)}, Quota: QuotaState{ObservedAt: now.Add(-time.Hour)}}
+	p := SubscriptionRoutingProfile(a, now, 30*time.Minute)
+	if p.Tier == nil || *p.Tier != 0 || p.TierSource != "manual" || p.ResetSource != "manual" {
+		t.Fatalf("manual override=%+v", p)
+	}
+	delete(a.Metadata, "routing_tier")
+	p = SubscriptionRoutingProfile(a, now, time.Minute)
+	if p.Tier == nil || *p.Tier != 3 || p.TierSource != "plan" {
+		t.Fatalf("detected plan=%+v", p)
+	}
+	a.Provider = "claude"
+	p = SubscriptionRoutingProfile(a, now, time.Minute)
+	if p.Tier != nil {
+		t.Fatalf("Claude tier inferred=%+v", p)
+	}
+}
+
+func TestSubscriptionFirstAffinityDoesNotPreempt(t *testing.T) {
+	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{})
+	defer selector.Stop()
+	a := &Auth{ID: "a", Provider: "codex", Metadata: map[string]any{"routing_tier": 0}}
+	b := &Auth{ID: "b", Provider: "codex", Metadata: map[string]any{"routing_tier": 1}, Attributes: map[string]string{"priority": "99"}}
+	opts := cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{"subscription-test"}}}
+	pick := func(want string) {
+		t.Helper()
+		got, err := selector.Pick(context.Background(), "codex", "model", opts, []*Auth{a, b})
+		if err != nil || got.ID != want {
+			t.Fatalf("got=%v err=%v want=%s", got, err, want)
+		}
+	}
+	pick("a")
+	a.Metadata["routing_tier"] = 3
+	pick("a")
+	a.Disabled = true
+	pick("b")
+	a.Disabled = false
+	a.Metadata["routing_tier"] = 0
+	pick("b")
+}
+
+func TestSubscriptionFirstManagerExecution(t *testing.T) {
+	manager := NewManager(nil, &SubscriptionFirstSelector{}, nil)
+	const model = "subscription-execution-model"
+	a := &Auth{ID: "subscription-low", Provider: "codex", Status: StatusActive, Metadata: map[string]any{"routing_tier": 0}}
+	b := &Auth{ID: "subscription-high", Provider: "codex", Status: StatusActive, Metadata: map[string]any{"routing_tier": 3}, Attributes: map[string]string{"priority": "99"}}
+	for _, a := range []*Auth{a, b} {
+		registry.GetGlobalRegistry().RegisterClient(a.ID, "codex", []*registry.ModelInfo{{ID: model}})
+		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(a.ID) })
+		if _, err := manager.Register(context.Background(), a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var selected string
+	manager.RegisterExecutor(&customStreamMockExecutor{identifier: "codex", streamFn: func(_ context.Context, a *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+		selected = a.ID
+		chunks := make(chan cliproxyexecutor.StreamChunk, 1)
+		chunks <- cliproxyexecutor.StreamChunk{Payload: []byte("data: {}\n\n")}
+		close(chunks)
+		return &cliproxyexecutor.StreamResult{Chunks: chunks}, nil
+	}})
+	execute := func(want string) {
+		t.Helper()
+		_, err := manager.ExecuteStream(context.Background(), []string{"codex"}, cliproxyexecutor.Request{Model: model}, cliproxyexecutor.Options{Stream: true})
+		if err != nil || selected != want {
+			t.Fatalf("selected=%s err=%v want=%s", selected, err, want)
+		}
+	}
+	execute(a.ID)
+	a.Disabled = true
+	if _, err := manager.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	execute(b.ID)
+	a.Disabled = false
+	if _, err := manager.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	registry.GetGlobalRegistry().UnregisterClient(a.ID)
+	manager.RefreshSchedulerEntry(a.ID)
+	execute(b.ID)
+}
+
+func TestSubscriptionRoutingMetadataSurvivesRefresh(t *testing.T) {
+	base := &Auth{ID: "a", Metadata: map[string]any{"routing_tier": 2, "routing_weekly_reset_at": "2026-10-05T00:00:00Z", "access_token": "old"}}
+	updated := base.Clone()
+	delete(updated.Metadata, "routing_tier")
+	delete(updated.Metadata, "routing_weekly_reset_at")
+	updated.Metadata["access_token"] = "refreshed"
+	current := base.Clone()
+	current.Metadata["routing_tier"] = 0
+	merged := MergeRefreshedAuth(base, current, updated)
+	if merged.Metadata["routing_tier"] != 0 || merged.Metadata["routing_weekly_reset_at"] != base.Metadata["routing_weekly_reset_at"] || merged.Metadata["access_token"] != "refreshed" {
+		t.Fatal("refresh lost manual ranking or token refresh")
+	}
+}
+
+func TestSubscriptionRoutingProfileWeeklyPrimaryAndOverrides(t *testing.T) {
+	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	early, late := now.Add(time.Hour), now.Add(2*time.Hour)
+	a := &Auth{Provider: "codex", Metadata: map[string]any{"routing_weekly_reset_at": now.Add(-time.Hour).Format(time.RFC3339)}, Quota: QuotaState{ObservedAt: now, Signals: map[string]string{
+		"X-Codex-Primary-Window-Minutes": "10080", "X-Codex-Primary-Reset-At": strconv.FormatInt(late.Unix(), 10),
+		"X-Codex-Secondary-Window-Minutes": "10080", "X-Codex-Secondary-Reset-At": strconv.FormatInt(early.Unix(), 10),
+	}}}
+	p := SubscriptionRoutingProfile(a, now, time.Minute)
+	if p.WeeklyResetAt != early.Format(time.RFC3339) || p.ResetSource != "observed" {
+		t.Fatal("expired manual override must fall back to earliest observed weekly window")
+	}
+	a.Quota.Signals["X-Codex-Secondary-Window-Minutes"] = "0"
+	p = SubscriptionRoutingProfile(a, now, time.Minute)
+	if p.WeeklyResetAt != late.Format(time.RFC3339) {
+		t.Fatal("weekly primary window was ignored")
+	}
+	a.Quota.ObservedAt = time.Time{}
+	if p := SubscriptionRoutingProfile(a, now, time.Minute); p.WeeklyResetAt != "" {
+		t.Fatal("missing observation timestamp was trusted")
+	}
+	for plan, want := range map[string]int{"free": 0, "go": 1, "plus": 2, "pro": 3} {
+		a.Metadata["plan_type"] = plan
+		p := SubscriptionRoutingProfile(a, now, time.Minute)
+		if p.Tier == nil || *p.Tier != want || p.TierSource != "plan" {
+			t.Fatalf("plan %s profile=%+v", plan, p)
+		}
+	}
+	a.Metadata["plan_type"] = "team"
+	if p := SubscriptionRoutingProfile(a, now, time.Minute); p.Tier != nil || p.TierSource != "unknown" {
+		t.Fatal("unknown plan ranked as known tier")
+	}
+}

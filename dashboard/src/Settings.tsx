@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDownWideNarrow,
   Check,
@@ -7,10 +7,13 @@ import {
   KeyRound,
   LogOut,
 } from "lucide-react";
-import type { ManagementApi, RoutingStrategy } from "./api";
+import type { Credential, ManagementApi, RoutingStrategy } from "./api";
 import { CopyButton, SectionHeading } from "./ui";
 import { routingNames } from "./Overview";
+import { AccountRouting } from "./AccountRouting";
+import { parseRouting, routingChanges, type RoutingSettings } from "./routing";
 
+const emptyCredentials: Credential[] = [];
 const choices = [
   {
     id: "round-robin" as const,
@@ -28,43 +31,114 @@ const choices = [
     id: "weighted-round-robin" as const,
     icon: GitBranch,
     detail:
-      "Share requests according to account weights already set in your configuration.",
+      "Share requests by weight within the highest available priority group. Set account weights below.",
+  },
+  {
+    id: "subscription-first" as const,
+    icon: ArrowDownWideNarrow,
+    detail:
+      "Use the lowest subscription tier first, then the earliest weekly reset. Keep conversations together with session affinity.",
   },
 ];
 
 export function Settings({
   api,
   strategy,
+  credentials = emptyCredentials,
   onRefresh,
   onDisconnect,
   notify,
 }: {
   api: ManagementApi;
   strategy: RoutingStrategy;
+  credentials?: Credential[];
   onRefresh: () => Promise<void>;
   onDisconnect: () => void;
   notify: (text: string) => void;
 }) {
-  const [selection, setSelection] = useState(strategy);
+  const [base, setBase] = useState<RoutingSettings | null>(null);
+  const [draft, setDraft] = useState(() => parseRouting({ strategy }));
+  const selection = draft.strategy;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => setSelection(strategy), [strategy]);
+  const dirty = base !== null && JSON.stringify(base) !== JSON.stringify(draft);
+  const editsRef = useRef({ dirty, busy });
+  editsRef.current = { dirty, busy };
+  useEffect(() => {
+    let active = true;
+    api
+      .routingSettings()
+      .then((settings) => {
+        if (active && !editsRef.current.dirty && !editsRef.current.busy) {
+          setBase(settings);
+          setDraft(settings);
+        }
+      })
+      .catch((reason) => {
+        if (active)
+          setError(
+            `${reason instanceof Error ? reason.message : "Could not load routing settings."} Refresh the gateway to try again.`,
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, credentials]);
+  function update(key: keyof RoutingSettings, value: unknown) {
+    setDraft({ ...draft, [key]: value });
+  }
   async function save() {
+    if (!base) return;
     setBusy(true);
     setError("");
     try {
-      await api.setRouting(selection);
+      const saved = await api.setRoutingSettings(routingChanges(base, draft));
       await onRefresh();
+      setBase(saved);
+      setDraft(saved);
       notify("Routing preference saved");
     } catch (reason) {
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not save routing. Refresh before trying again.",
+        `${reason instanceof Error ? reason.message : "Could not confirm routing saved."} Your draft is retained.`,
       );
     } finally {
       setBusy(false);
     }
+  }
+  function duration(
+    key: "session-affinity-ttl" | "subscription-first-max-observation-age",
+    label: string,
+  ) {
+    return (
+      <label>
+        {label}
+        <input
+          value={draft[key]}
+          disabled={!base || busy}
+          onChange={(event) => update(key, event.target.value)}
+          placeholder="30m or 1h"
+        />
+      </label>
+    );
+  }
+  function toggle(
+    key:
+      | "session-affinity"
+      | "session-affinity-subagents"
+      | "subscription-first-prefer-weekly-reset",
+    label: string,
+  ) {
+    return (
+      <label className="routing-toggle">
+        <input
+          type="checkbox"
+          checked={draft[key]}
+          disabled={!base || busy}
+          onChange={(event) => update(key, event.target.checked)}
+        />
+        {label}
+      </label>
+    );
   }
   return (
     <div className="settings-layout">
@@ -85,8 +159,8 @@ export function Settings({
                 name="routing"
                 value={id}
                 checked={selection === id}
-                disabled={busy}
-                onChange={() => setSelection(id)}
+                disabled={!base || busy}
+                onChange={() => update("strategy", id)}
               />
               <span className="choice-icon">
                 <Icon size={22} />
@@ -101,6 +175,99 @@ export function Settings({
             </label>
           ))}
         </fieldset>
+        <div className="routing-options">
+          <p>
+            {selection === "round-robin"
+              ? "Higher priority accounts are used first. Accounts with equal priority take turns."
+              : selection === "fill-first"
+                ? "Higher priority accounts are used first. The first available account handles requests until unavailable."
+                : selection === "weighted-round-robin"
+                  ? "Higher priority accounts are used first. Equal priority accounts share requests by weight; zero weight skips an account."
+                  : "Lower tier ranks go first. Codex plans can be detected; set Claude ranks manually. Unknown ranks go last. Priority only breaks otherwise equal choices."}
+          </p>
+          {selection === "subscription-first" && (
+            <>
+              <p>
+                Codex ranks: Free 0, Go 1, Plus 2, Pro 3. Lower numbers go first
+                within each provider. Set Claude ranks manually.
+              </p>
+              {toggle(
+                "subscription-first-prefer-weekly-reset",
+                "Prefer the earliest weekly reset within a tier",
+              )}
+              <div className="routing-fields">
+                {duration(
+                  "subscription-first-max-observation-age",
+                  "Maximum observation age",
+                )}
+              </div>
+              <p>
+                Reset observations come from provider request traffic. Stale or
+                past resets are ignored. There is no quota polling.
+              </p>
+            </>
+          )}
+          {toggle(
+            "session-affinity",
+            "Keep a conversation on the same account",
+          )}
+          {draft["session-affinity"] && (
+            <>
+              <div className="routing-fields">
+                {duration(
+                  "session-affinity-ttl",
+                  "Conversation affinity lifetime",
+                )}
+              </div>
+              {toggle(
+                "session-affinity-subagents",
+                "Keep subagents with their parent conversation",
+              )}
+              <p>
+                Affinity helps preserve provider caches while the pinned account
+                remains available. Saving routing settings can reset existing
+                assignments.
+              </p>
+            </>
+          )}
+          <details>
+            <summary>Retry options</summary>
+            <p>
+              Retries use the next available credential and respect cooldowns.
+              Zero credential limit allows all available accounts.
+            </p>
+            <div className="routing-fields">
+              {(
+                [
+                  ["request-retry", "Retry rounds"],
+                  ["max-retry-credentials", "Credential limit (0 uses all)"],
+                  ["max-retry-interval", "Maximum retry wait (seconds)"],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key}>
+                  {label}
+                  <input
+                    type="number"
+                    min="0"
+                    max="2147483647"
+                    step="1"
+                    disabled={!base || busy}
+                    value={draft.retry[key]}
+                    onChange={(event) =>
+                      update("retry", {
+                        ...draft.retry,
+                        [key]:
+                          event.target.value === ""
+                            ? NaN
+                            : Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          </details>
+        </div>
         {error && (
           <p role="alert" className="inline-error">
             {error}
@@ -110,11 +277,36 @@ export function Settings({
           <span>Applies to new account selections.</span>
           <button
             className="button primary"
-            disabled={busy || selection === strategy}
+            disabled={!base || busy || !dirty}
             onClick={() => void save()}
           >
             {busy ? "Saving…" : "Save changes"}
           </button>
+        </div>
+      </section>
+      <section className="panel settings-panel">
+        <SectionHeading
+          title="Account routing"
+          subtitle="Save each account separately. Global routing changes use Save changes above."
+        />
+        <div className="routing-options">
+          {credentials.length === 0 ? (
+            <p>No file-backed accounts are connected.</p>
+          ) : (
+            credentials.map((account) => (
+              <AccountRouting
+                key={account.name}
+                account={account}
+                api={api}
+                strategy={selection}
+                observationAge={
+                  base?.["subscription-first-max-observation-age"] ?? "30m"
+                }
+                onRefresh={onRefresh}
+                notify={notify}
+              />
+            ))
+          )}
         </div>
       </section>
       <section className="panel settings-panel">
