@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 
 if (
   !process.env.DASHBOARD_PROOF_ACCESS ||
@@ -151,31 +151,24 @@ try {
   await page.reload();
   await unlock();
   await navigate("Settings");
-  assert.equal(
-    await page
-      .getByRole("radio", { name: /Use subscription order/ })
-      .isChecked(),
-    true,
+  await expect(
+    page.getByRole("radio", { name: /Use subscription order/ }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("radio", { name: /Use subscription order/ }),
+  ).toBeChecked();
+  await expect(
+    page.getByLabel("Keep a conversation on the same account", { exact: true }),
+  ).toBeChecked();
+  await expect(page.getByLabel("Conversation affinity lifetime")).toHaveValue(
+    /^2h(?:0m)?(?:0s)?$/,
   );
-  assert.equal(
-    await page
-      .getByLabel("Keep a conversation on the same account", { exact: true })
-      .isChecked(),
-    true,
-  );
-  assert.ok(
-    (
-      await page.getByLabel("Conversation affinity lifetime").inputValue()
-    ).startsWith("2h"),
-  );
-  assert.equal(
-    await page
+  await expect(
+    page
       .locator(".account-routing")
       .first()
-      .getByLabel("Tier rank (blank uses detected plan)")
-      .inputValue(),
-    "1",
-  );
+      .getByLabel("Tier rank (blank uses detected plan)"),
+  ).toHaveValue("1");
   await capture("relay-settings");
   await page.setViewportSize({ width: 390, height: 844 });
   await capture("relay-settings-mobile");
