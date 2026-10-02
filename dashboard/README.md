@@ -80,7 +80,14 @@ and run `npm run test:browser`. The test requires the populated proof instance.
 
 ## Routing customization
 
-Settings offers rotation, fill-first, weighted rotation and subscription order.
+Settings separates shared Relay policy from Codex and Claude account settings.
+The provider tabs show account counts; Other accounts appears when another provider
+is connected. Arrow keys, Home and End move between tabs. Switching tabs and
+refreshing accounts retain unsaved drafts and errors. Save Relay settings changes
+shared policy; Save account changes only that account. Runtime-only accounts are
+shown with disabled fields because they cannot be edited through this API.
+
+Relay offers rotation, fill-first, weighted rotation and subscription order.
 The first three prefer higher priority accounts. Weighted rotation divides work
 within the highest available priority group; a zero weight excludes the account.
 Subscription order uses lower tier ranks first, then the earliest usable weekly
@@ -90,7 +97,8 @@ can be entered manually. Unknown ranks are used last.
 Weekly reset observations come from provider request traffic. Past resets and
 observations older than the configured maximum age are ignored. There is no
 background quota polling. An account can have a future manual reset override;
-clearing its rank or reset returns that field to automatic detection.
+clearing its reset returns to provider observations. Clearing a Codex rank uses
+the detected plan; Claude requires a manual rank, so a blank rank is unknown.
 
 Conversation affinity helps preserve provider caches while an assigned account
 is available. Routing settings changes may reset existing assignments. Account
