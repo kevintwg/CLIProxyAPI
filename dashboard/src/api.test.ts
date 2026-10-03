@@ -401,3 +401,45 @@ describe("routing customization", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("Codex routing observations", () => {
+  const profile = {
+    tier_source: "plan",
+    reset_source: "observed",
+    banked_reset_expires_at: "2030-01-02T00:00:00Z",
+    banked_reset_observed_at: "2030-01-01T00:00:00Z",
+    quota_reserve_percent: 5,
+    quota_reserve_blocked: false,
+  };
+  it("retains independent banked reset observations and a known unblocked cutoff", async () => {
+    respond({
+      files: [
+        { ...account, routing_profile: { ...profile, access_token: "secret" } },
+      ],
+    });
+    expect((await api.credentials())[0]?.routing_profile).toEqual(profile);
+  });
+  it("preserves missing observations as unknown", async () => {
+    const unknown = {
+      tier_source: "unknown",
+      reset_source: "unknown",
+      quota_reserve_percent: 5,
+    };
+    respond({ files: [{ ...account, routing_profile: unknown }] });
+    expect((await api.credentials())[0]?.routing_profile).toEqual(unknown);
+  });
+  it.each([
+    { banked_reset_expires_at: "invalid" },
+    { banked_reset_observed_at: "invalid" },
+    { banked_reset_expires_at: 42 },
+    { quota_reserve_percent: -1 },
+    { quota_reserve_percent: 101 },
+    { quota_reserve_percent: "5" },
+    { quota_reserve_blocked: "false" },
+  ])("rejects malformed routing observations %j", async (invalid) => {
+    respond({
+      files: [{ ...account, routing_profile: { ...profile, ...invalid } }],
+    });
+    await expect(api.credentials()).rejects.toThrow();
+  });
+});

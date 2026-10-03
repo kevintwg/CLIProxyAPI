@@ -16,12 +16,16 @@ import (
 
 // RoutingProfile contains only safe ranking inputs, never authentication material.
 type RoutingProfile struct {
-	Tier          *int   `json:"tier,omitempty"`
-	TierSource    string `json:"tier_source"`
-	Plan          string `json:"plan,omitempty"`
-	WeeklyResetAt string `json:"weekly_reset_at,omitempty"`
-	ResetSource   string `json:"reset_source"`
-	ObservedAt    string `json:"observed_at,omitempty"`
+	Tier                  *int     `json:"tier,omitempty"`
+	TierSource            string   `json:"tier_source"`
+	Plan                  string   `json:"plan,omitempty"`
+	WeeklyResetAt         string   `json:"weekly_reset_at,omitempty"`
+	ResetSource           string   `json:"reset_source"`
+	ObservedAt            string   `json:"observed_at,omitempty"`
+	BankedResetExpiresAt  string   `json:"banked_reset_expires_at,omitempty"`
+	BankedResetObservedAt string   `json:"banked_reset_observed_at,omitempty"`
+	QuotaReservePercent   *float64 `json:"quota_reserve_percent,omitempty"`
+	QuotaReserveBlocked   *bool    `json:"quota_reserve_blocked,omitempty"`
 }
 
 func ManualRoutingTier(a *Auth) (int, bool) {
@@ -115,12 +119,13 @@ func SubscriptionRoutingProfile(a *Auth, now time.Time, maxAge time.Duration) Ro
 		signals[strings.ToLower(key)] = value
 	}
 	profile.Plan = detectedRoutingPlan(a, signals, fresh)
+	applyCodexRoutingProfile(&profile, a, now, maxAge)
 	tiers := map[string]int{"free": 0, "go": 1, "plus": 2, "pro": 3}
 	if tier, ok := tiers[profile.Plan]; ok {
 		profile.Tier = &tier
 		profile.TierSource = "plan"
 	}
-	if fresh {
+	if fresh && (profile.ObservedAt == "" || a.Quota.ObservedAt.After(observedResetTime(profile.ObservedAt))) {
 		profile.ObservedAt = a.Quota.ObservedAt.UTC().Format(time.RFC3339)
 	}
 
@@ -140,6 +145,9 @@ func SubscriptionRoutingProfile(a *Auth, now time.Time, maxAge time.Duration) Ro
 		return profile
 	}
 	reset := observedWeeklyReset(a.Provider, signals, a.Quota.ObservedAt, now)
+	if profile.WeeklyResetAt != "" && !a.Quota.ObservedAt.After(codexRoutingObservedAt(a)) {
+		return profile
+	}
 	if reset.After(now) {
 		profile.WeeklyResetAt = reset.UTC().Format(time.RFC3339)
 		profile.ResetSource = "observed"
@@ -222,7 +230,7 @@ func observedResetTime(raw string) time.Time {
 	return time.Time{}
 }
 
-// SubscriptionFirstSelector ranks available credentials by tier, then fresh weekly reset.
+// SubscriptionFirstSelector ranks by tier, banked-reset expiry, then weekly reset.
 // Existing affinity bindings are authoritative; this policy chooses only cold/failover bindings.
 type SubscriptionFirstSelector struct {
 	MaxObservationAge time.Duration
@@ -264,6 +272,17 @@ func (s *SubscriptionFirstSelector) Pick(ctx context.Context, provider, model st
 		}
 		if ta != tb {
 			return ta < tb
+		}
+		if pa.BankedResetExpiresAt != pb.BankedResetExpiresAt {
+			if pa.BankedResetExpiresAt == "" {
+				return false
+			}
+			if pb.BankedResetExpiresAt == "" {
+				return true
+			}
+			ra, _ := time.Parse(time.RFC3339Nano, pa.BankedResetExpiresAt)
+			rb, _ := time.Parse(time.RFC3339Nano, pb.BankedResetExpiresAt)
+			return ra.Before(rb)
 		}
 		if preferReset && pa.WeeklyResetAt != pb.WeeklyResetAt {
 			if pa.WeeklyResetAt == "" {

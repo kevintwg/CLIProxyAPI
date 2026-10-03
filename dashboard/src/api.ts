@@ -32,6 +32,10 @@ export interface Credential {
     weekly_reset_at?: string;
     reset_source: "manual" | "observed" | "unknown";
     observed_at?: string;
+    banked_reset_expires_at?: string;
+    banked_reset_observed_at?: string;
+    quota_reserve_percent?: number;
+    quota_reserve_blocked?: boolean;
   };
 }
 
@@ -145,15 +149,37 @@ function credential(value: unknown): Credential {
       tier_source: profile.tier_source,
       reset_source: profile.reset_source,
     } as NonNullable<Credential["routing_profile"]>;
-    optionalFields(profile, parsed, ["tier"], "number");
     optionalFields(
       profile,
       parsed,
-      ["plan", "weekly_reset_at", "observed_at"],
+      ["tier", "quota_reserve_percent"],
+      "number",
+    );
+    optionalFields(
+      profile,
+      parsed,
+      [
+        "plan",
+        "weekly_reset_at",
+        "observed_at",
+        "banked_reset_expires_at",
+        "banked_reset_observed_at",
+      ],
       "string",
     );
     if (parsed.tier !== undefined) integer(parsed.tier, 0, 1000, "Tier rank");
-    for (const date of [parsed.weekly_reset_at, parsed.observed_at])
+    optionalFields(profile, parsed, ["quota_reserve_blocked"], "boolean");
+    if (
+      parsed.quota_reserve_percent !== undefined &&
+      (parsed.quota_reserve_percent < 0 || parsed.quota_reserve_percent > 100)
+    )
+      throw new Error("Unexpected routing quota reserve percentage.");
+    for (const date of [
+      parsed.weekly_reset_at,
+      parsed.observed_at,
+      parsed.banked_reset_expires_at,
+      parsed.banked_reset_observed_at,
+    ])
       if (date !== undefined && !Number.isFinite(Date.parse(date)))
         throw new Error("Unexpected routing profile date.");
     result.routing_profile = parsed;

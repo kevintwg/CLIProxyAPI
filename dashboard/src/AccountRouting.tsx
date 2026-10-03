@@ -57,6 +57,14 @@ export function AccountRouting({
       Date.parse(profile.observed_at) <= Date.now() &&
       Date.now() - Date.parse(profile.observed_at) <=
         durationSeconds(observationAge) * 1000);
+  const bankedFuture =
+    !!profile?.banked_reset_expires_at &&
+    Date.parse(profile.banked_reset_expires_at) > Date.now();
+  const bankedFresh =
+    !!profile?.banked_reset_observed_at &&
+    Date.parse(profile.banked_reset_observed_at) <= Date.now() &&
+    Date.now() - Date.parse(profile.banked_reset_observed_at) <=
+      durationSeconds(observationAge) * 1000;
   async function save() {
     setError("");
     setBusy(true);
@@ -161,6 +169,53 @@ export function AccountRouting({
           This runtime-only account cannot be edited here. Manage its routing in
           the source configuration.
         </p>
+      )}
+      {account.provider === "codex" && (
+        <dl className="account-routing-summary">
+          <div>
+            <dt>Quota cutoff</dt>
+            <dd>
+              <strong>
+                {profile?.quota_reserve_blocked === undefined
+                  ? "Quota state unknown"
+                  : profile.quota_reserve_blocked
+                    ? "Blocked at 5% remaining or less"
+                    : "Above the 5% cutoff"}
+              </strong>
+              <span>Fixed 5% reserve, even with purchased usage credits.</span>
+            </dd>
+          </div>
+          {strategy === "subscription-first" && (
+            <div>
+              <dt>Banked reset expiry</dt>
+              <dd>
+                <strong>
+                  {!bankedFuture
+                    ? "No usable banked reset"
+                    : !bankedFresh
+                      ? "Stale, ignored"
+                      : "Usable for ordering"}
+                </strong>
+                {profile?.banked_reset_expires_at && (
+                  <span>
+                    {new Date(profile.banked_reset_expires_at).toLocaleString()}
+                  </span>
+                )}
+                {profile?.banked_reset_observed_at && (
+                  <small>
+                    Observed{" "}
+                    {new Date(
+                      profile.banked_reset_observed_at,
+                    ).toLocaleString()}
+                  </small>
+                )}
+                <span>
+                  Ordering only. Banked resets are not redeemed automatically.
+                </span>
+              </dd>
+            </div>
+          )}
+        </dl>
       )}
       {strategy === "subscription-first" ? (
         <>

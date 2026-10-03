@@ -984,8 +984,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		auth.Generation++
 		auth.UpdatedAt = now
 
-		if !result.SkipQuotaObservation {
+		if !result.SkipQuotaObservation && codexResponseObservationMatches(ctx, auth) {
 			auth.Quota.ObserveResponseHeadersForProvider(result.Provider, responseHeaders, now)
+			observeCodexRoutingHeaders(auth, responseHeaders, now)
 			if modelState != nil {
 				modelState.Quota.ObserveResponseHeadersForProvider(result.Provider, responseHeaders, now)
 			}

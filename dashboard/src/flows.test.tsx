@@ -635,3 +635,85 @@ it("distinguishes stale provider resets from usable manual resets", async () => 
     ).getByText("Usable for ordering"),
   ).toBeVisible();
 });
+
+it("uses banked reset freshness independently and distinguishes cutoff states", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
+  const api = new ManagementApi("test-key");
+  vi.spyOn(api, "routingSettings").mockResolvedValue(
+    parseRouting({ strategy: "subscription-first" }),
+  );
+  const common = {
+    ...account,
+    provider: "codex",
+    routing_profile: {
+      tier_source: "plan" as const,
+      reset_source: "manual" as const,
+      weekly_reset_at: "2030-01-02T00:00:00Z",
+      banked_reset_expires_at: "2030-01-02T00:00:00Z",
+      banked_reset_observed_at: "2029-01-01T00:00:00Z",
+      quota_reserve_percent: 5,
+      quota_reserve_blocked: true,
+    },
+  };
+  render(
+    <Settings
+      api={api}
+      strategy="subscription-first"
+      credentials={[
+        {
+          ...common,
+          id: "blocked",
+          name: "blocked.json",
+          label: "Blocked fixture",
+        },
+        {
+          ...common,
+          id: "available",
+          name: "available.json",
+          label: "Available fixture",
+          routing_profile: {
+            ...common.routing_profile,
+            banked_reset_observed_at: "2029-12-31T23:59:00Z",
+            quota_reserve_blocked: false,
+          },
+        },
+        {
+          ...common,
+          id: "unknown",
+          name: "unknown.json",
+          label: "Unknown fixture",
+          routing_profile: {
+            tier_source: "unknown",
+            reset_source: "unknown",
+            quota_reserve_percent: 5,
+          },
+        },
+      ]}
+      onRefresh={vi.fn()}
+      onDisconnect={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  await userEvent.click(screen.getByRole("tab", { name: /Codex/ }));
+  const blocked = within(
+    screen.getByRole("region", { name: "Blocked fixture routing" }),
+  );
+  expect(blocked.getByText("Blocked at 5% remaining or less")).toBeVisible();
+  expect(blocked.getByText("Stale, ignored")).toBeVisible();
+  expect(blocked.getByText("Usable for ordering")).toBeVisible();
+  const available = within(
+    screen.getByRole("region", { name: "Available fixture routing" }),
+  );
+  expect(available.getByText("Above the 5% cutoff")).toBeVisible();
+  expect(available.getAllByText("Usable for ordering")).toHaveLength(2);
+  const unknown = within(
+    screen.getByRole("region", { name: "Unknown fixture routing" }),
+  );
+  expect(unknown.getByText("Quota state unknown")).toBeVisible();
+  expect(unknown.getByText("No usable banked reset")).toBeVisible();
+  expect(screen.getAllByLabelText("Tier rank override")).toHaveLength(3);
+  expect(screen.getAllByLabelText("Weekly reset override")).toHaveLength(3);
+  expect(
+    screen.queryByRole("spinbutton", { name: /cutoff/i }),
+  ).not.toBeInTheDocument();
+});

@@ -888,6 +888,9 @@ func isCredentialBlocked(auth *Auth, supportedModelCount int, now time.Time) boo
 	if auth == nil {
 		return true
 	}
+	if _, blocked := codexQuotaReserveState(auth, now); blocked {
+		return true
+	}
 	if auth.Disabled || auth.Status == StatusDisabled {
 		return true
 	}

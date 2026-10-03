@@ -38,7 +38,7 @@ const choices = [
     id: "subscription-first" as const,
     icon: ArrowDownWideNarrow,
     detail:
-      "Use the lowest subscription tier first, then the earliest weekly reset. Keep conversations together with session affinity.",
+      "Use the lowest subscription tier first. Codex then prefers the earliest usable banked reset expiry, then the earliest weekly reset.",
   },
 ];
 
@@ -457,6 +457,15 @@ export function Settings({
                           ? "Enter tier ranks manually. Blank ranks are unknown and used last."
                           : "Enter a manual rank when no plan is detected."}
                     </p>
+                    {group.id === "codex" && (
+                      <p>
+                        Codex accounts stop routing at 5% remaining quota, even
+                        with purchased usage credits. Existing conversations
+                        stay on their account until this cutoff or
+                        unavailability. Banked resets are never redeemed
+                        automatically.
+                      </p>
+                    )}
                     <details className="account-order-help">
                       <summary>How account order works</summary>
                       <p>
@@ -467,9 +476,11 @@ export function Settings({
                             : "Unknown ranks are used last."}
                       </p>
                       <p>
-                        Lower ranks are preferred within each provider. With
-                        weekly reset preference enabled, equal ranks use the
-                        earliest usable reset.
+                        Lower ranks are preferred within each provider. Codex
+                        accounts with equal ranks prefer the earliest usable
+                        banked reset expiry. With weekly reset preference
+                        enabled, the earliest usable weekly reset breaks
+                        remaining ties.
                       </p>
                       <p>
                         Provider observations come from request traffic. Stale
