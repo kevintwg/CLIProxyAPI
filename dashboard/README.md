@@ -90,13 +90,19 @@ shown with disabled fields because they cannot be edited through this API.
 Relay offers rotation, fill-first, weighted rotation and subscription order.
 The first three prefer higher priority accounts. Weighted rotation divides work
 within the highest available priority group; a zero weight excludes the account.
-Subscription order uses lower tier ranks first, then the earliest usable weekly
-reset. Codex plan ranks are detected (free 0, go 1, plus 2, pro 3); Claude ranks
+Subscription order uses lower tier ranks first. Codex then prefers the earliest
+usable banked reset expiry, followed by the earliest usable weekly reset when
+weekly reset preference is enabled. Banked resets are never redeemed automatically.
+Codex accounts stop routing at 5% remaining quota, even with purchased usage
+credits. Existing conversations keep their assigned account until that cutoff or
+unavailability. Codex plan ranks are detected (free 0, go 1, plus 2, pro 3); Claude ranks
 can be entered manually. Unknown ranks are used last.
 
-Weekly reset observations come from provider request traffic. Past resets and
-observations older than the configured maximum age are ignored. There is no
-background quota polling. An account can have a future manual reset override;
+Codex quota and banked-reset observations refresh on startup and every minute.
+Weekly resets also come from provider request traffic. Past resets and ranking
+observations older than the configured maximum age are ignored. A known exhausted
+allowance remains blocked until fresh usage confirms recovery; a passed reset
+time alone does not reopen it. Failed probes preserve the last known state. An account can have a future manual reset override;
 clearing its reset returns to provider observations. Clearing a Codex rank uses
 the detected plan; Claude requires a manual rank, so a blank rank is unknown.
 

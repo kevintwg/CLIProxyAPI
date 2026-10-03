@@ -113,6 +113,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	}
 	m.authEpochs[auth.ID]++
 	auth.RegistrationEpoch = m.authEpochs[auth.ID]
+	auth.CodexRouting = nil
 	auth.Generation = 1
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
@@ -212,6 +213,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		auth.Index = existing.Index
 		auth.indexAssigned = existing.indexAssigned
 	}
+	preserveCodexRouting(existing, auth, mode == updateModeRefresh)
 	auth.Success = existing.Success
 	auth.Failed = existing.Failed
 	auth.recentRequests = existing.recentRequests
