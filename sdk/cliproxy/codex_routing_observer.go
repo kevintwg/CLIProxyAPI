@@ -18,7 +18,6 @@ const (
 	codexUsageURL            = "https://chatgpt.com/backend-api/wham/usage"
 	codexResetCreditsURL     = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 	codexObservationInterval = time.Minute
-	codexProbeTimeout        = 20 * time.Second
 	codexProbeBodyLimit      = 1 << 20
 	codexObserverWorkers     = 4
 )
@@ -135,10 +134,8 @@ func (o *codexRoutingObserver) observe(ctx context.Context, auth *coreauth.Auth)
 }
 
 func (o *codexRoutingObserver) fetch(ctx context.Context, auth *coreauth.Auth, url string) ([]byte, error) {
-	// Read-only background probes have a bounded lifetime so a hung account cannot
-	// occupy a recovery worker forever. This does not affect generation requests.
-	ctx, cancel := context.WithTimeout(ctx, codexProbeTimeout)
-	defer cancel()
+	// The repository forbids deadlines after an upstream connection is established.
+	// Probes use the service cancellation context and never change generation transports.
 	req, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if errRequest != nil {
 		return nil, errors.New("invalid Codex observation URL")

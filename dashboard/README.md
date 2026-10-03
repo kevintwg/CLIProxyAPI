@@ -102,7 +102,8 @@ Codex quota and banked-reset observations refresh on startup and every minute.
 Weekly resets also come from provider request traffic. Past resets and ranking
 observations older than the configured maximum age are ignored. A known exhausted
 allowance remains blocked until fresh usage confirms recovery; a passed reset
-time alone does not reopen it. Failed probes preserve the last known state. An account can have a future manual reset override;
+time alone does not reopen it. Failed probes preserve the last known state. Provider reads follow the server
+transport policy without response deadlines; shutdown cancels outstanding probes. An account can have a future manual reset override;
 clearing its reset returns to provider observations. Clearing a Codex rank uses
 the detected plan; Claude requires a manual rank, so a blank rank is unknown.
 
