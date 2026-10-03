@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -63,21 +64,60 @@ func codexAccountIdentity(a *Auth) string {
 	return strings.Join(fields, "\x00")
 }
 
-func preserveCodexRouting(existing, incoming *Auth, refresh bool) {
+func preserveCodexRouting(existing, incoming *Auth, refresh bool) bool {
 	incoming.CodexRouting = nil
-	if !strings.EqualFold(existing.Provider, "codex") || !strings.EqualFold(incoming.Provider, "codex") || incoming.AuthKind() != AuthKindOAuth {
-		return
+	if !codexSubscriptionAuth(existing) && !codexSubscriptionAuth(incoming) {
+		return false
+	}
+	if !strings.EqualFold(existing.Provider, incoming.Provider) || existing.AuthKind() != incoming.AuthKind() {
+		return true
 	}
 	existingIdentity, incomingIdentity := codexAccountIdentity(existing), codexAccountIdentity(incoming)
 	if existingIdentity != incomingIdentity {
-		return
+		return true
 	}
-	// Refresh rotates credentials for the same account. Without stable account metadata,
-	// only a manager-owned refresh can establish that token rotation is the same account.
+	// A manager-owned refresh establishes continuity even without account metadata.
 	if existingIdentity == "" && !refresh && CredentialsChanged(existing, incoming) {
-		return
+		return true
 	}
 	incoming.CodexRouting = existing.CodexRouting.Clone()
+	return false
+}
+
+func clearCodexPassiveObservations(auth *Auth) {
+	auth.Quota.ObservedAt = time.Time{}
+	auth.Quota.Signals = nil
+	for model, state := range auth.ModelStates {
+		if state == nil {
+			continue
+		}
+		state = state.Clone()
+		state.Quota.ObservedAt = time.Time{}
+		state.Quota.Signals = nil
+		auth.ModelStates[model] = state
+	}
+}
+
+type codexRoutingObservationContextKey struct{}
+
+func withCodexRoutingObservationAuth(ctx context.Context, auth *Auth) context.Context {
+	if !codexSubscriptionAuth(auth) {
+		return ctx
+	}
+	return context.WithValue(ctx, codexRoutingObservationContextKey{}, auth.Clone())
+}
+
+func codexRoutingObservationMatches(current, base *Auth) bool {
+	return current != nil && base != nil && current.ID == base.ID &&
+		strings.EqualFold(current.Provider, base.Provider) && current.AuthKind() == base.AuthKind() &&
+		current.RegistrationEpoch == base.RegistrationEpoch &&
+		codexAccountIdentity(current) == codexAccountIdentity(base) && !CredentialsChanged(current, base)
+}
+
+func codexResponseObservationMatches(ctx context.Context, current *Auth) bool {
+	base, _ := ctx.Value(codexRoutingObservationContextKey{}).(*Auth)
+	// Direct SDK result reports retain their existing caller-owned identity contract.
+	return base == nil || codexRoutingObservationMatches(current, base)
 }
 
 // UpdateCodexRoutingObservation applies successful probes only to the credential that
@@ -90,8 +130,7 @@ func (m *Manager) UpdateCodexRoutingObservation(base *Auth, observation *CodexRo
 	current := m.auths[base.ID]
 	if current == nil || current.Disabled || current.Status == StatusDisabled ||
 		!strings.EqualFold(current.Provider, "codex") || current.AuthKind() != AuthKindOAuth ||
-		current.RegistrationEpoch != base.RegistrationEpoch ||
-		codexAccountIdentity(current) != codexAccountIdentity(base) || CredentialsChanged(current, base) {
+		!codexRoutingObservationMatches(current, base) {
 		m.mu.Unlock()
 		return false
 	}

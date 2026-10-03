@@ -213,7 +213,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		auth.Index = existing.Index
 		auth.indexAssigned = existing.indexAssigned
 	}
-	preserveCodexRouting(existing, auth, mode == updateModeRefresh)
+	resetCodexObservations := preserveCodexRouting(existing, auth, mode == updateModeRefresh)
 	auth.Success = existing.Success
 	auth.Failed = existing.Failed
 	auth.recentRequests = existing.recentRequests
@@ -254,6 +254,10 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	cooldownStateChanged = normalizeModelStates(auth) || cooldownStateChanged
 	if m.cooldownDisabledForAuth(auth) || auth.Disabled || auth.Status == StatusDisabled {
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
+	}
+	// Clear after cooldown merges so they cannot restore another account's signals.
+	if resetCodexObservations {
+		clearCodexPassiveObservations(auth)
 	}
 	auth.EnsureIndex()
 	// A minted Meta key must reach the configured store before requests can use it.
