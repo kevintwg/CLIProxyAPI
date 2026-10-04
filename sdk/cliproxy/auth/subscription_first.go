@@ -235,7 +235,10 @@ func observedResetTime(raw string) time.Time {
 type SubscriptionFirstSelector struct {
 	MaxObservationAge time.Duration
 	PreferWeeklyReset *bool
-	nowFunc           func() time.Time
+	// ReturnToPreferredTier lets session affinity leave a bound credential once a strictly
+	// better tier is available again, instead of keeping a failover binding for its whole TTL.
+	ReturnToPreferredTier bool
+	nowFunc               func() time.Time
 }
 
 func selectorUsesSubscriptionFirst(selector Selector) bool {
@@ -244,6 +247,40 @@ func selectorUsesSubscriptionFirst(selector Selector) bool {
 	}
 	_, ok := selector.(*SubscriptionFirstSelector)
 	return ok
+}
+
+func (s *SubscriptionFirstSelector) routingTier(a *Auth, now time.Time) int {
+	if tier := SubscriptionRoutingProfile(a, now, s.MaxObservationAge).Tier; tier != nil {
+		return *tier
+	}
+	return 1001
+}
+
+// preferredTierPick returns the selector's pick when it lies in a strictly better tier than the
+// bound credential. Equal tiers never move a binding, so reset ordering cannot make sessions flap.
+func (s *SubscriptionFirstSelector) preferredTierPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
+	if s == nil || !s.ReturnToPreferredTier || bound == nil {
+		return nil
+	}
+	now := time.Now()
+	if s.nowFunc != nil {
+		now = s.nowFunc()
+	}
+	boundTier, better := s.routingTier(bound, now), false
+	for _, a := range auths {
+		if a != nil && a.ID != bound.ID && s.routingTier(a, now) < boundTier {
+			better = true
+			break
+		}
+	}
+	if !better {
+		return nil
+	}
+	pick, err := s.Pick(ctx, provider, model, opts, auths)
+	if err != nil || pick == nil || pick.ID == bound.ID || s.routingTier(pick, now) >= boundTier {
+		return nil
+	}
+	return pick
 }
 
 func (s *SubscriptionFirstSelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {

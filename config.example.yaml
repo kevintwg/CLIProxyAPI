@@ -139,6 +139,10 @@ routing:
   # Read-only quota/reset-credit probes refresh every minute; banked resets are never redeemed.
   subscription-first-max-observation-age: "30m"
   subscription-first-prefer-weekly-reset: true
+  # When true, a session bound to a worse tier (for example after its preferred plan hit a limit)
+  # moves back to a strictly better tier as soon as one is available. Equal tiers never move.
+  # The first request after the move cannot reuse the old credential's prompt cache.
+  subscription-first-return-to-preferred-tier: false
   # Enable universal session-sticky routing for all clients.
   # Explicit Claude Code, Codex, OpenCode, and pi session headers are preferred,
   # followed by prompt_cache_key, Responses conversation IDs, legacy body IDs,
