@@ -9,6 +9,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
 )
 
 func TestSubscriptionFirstRanking(t *testing.T) {
@@ -105,6 +106,93 @@ func TestSubscriptionFirstAffinityDoesNotPreempt(t *testing.T) {
 	a.Disabled = false
 	a.Metadata["routing_tier"] = 0
 	pick("b")
+}
+
+func TestSubscriptionFirstAffinityReturnsToPreferredTier(t *testing.T) {
+	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{ReturnToPreferredTier: true})
+	defer selector.Stop()
+	pro := &Auth{ID: "pro", Provider: "claude", Metadata: map[string]any{"routing_tier": 1}}
+	max := &Auth{ID: "max", Provider: "claude", Metadata: map[string]any{"routing_tier": 2}, Attributes: map[string]string{"priority": "99"}}
+	pick := func(session, want string) {
+		t.Helper()
+		opts := cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{session}}}
+		got, err := selector.Pick(context.Background(), "claude", "model", opts, []*Auth{pro, max})
+		if err != nil || got.ID != want {
+			t.Fatalf("session=%s got=%v err=%v want=%s", session, got, err, want)
+		}
+	}
+	pick("busy", "pro")
+	pro.Unavailable = true
+	pro.NextRetryAfter = time.Now().Add(time.Hour)
+	pro.Quota = QuotaState{Exceeded: true, NextRecoverAt: time.Now().Add(time.Hour)}
+	pick("busy", "max") // Limit reached: the bound session fails over.
+	pick("busy", "max") // Still limited: the failover binding holds.
+	pro.Unavailable = false
+	pro.NextRetryAfter = time.Time{}
+	pro.Quota = QuotaState{}
+	pick("busy", "pro") // Preferred tier recovered: the session returns on its next request.
+	pick("busy", "pro")
+
+	// A strictly worse binding is required; an equal tier never moves, whatever the reset order says.
+	now := time.Now()
+	early := &Auth{ID: "early", Provider: "codex", Metadata: map[string]any{"routing_tier": 3, "routing_weekly_reset_at": now.Add(time.Hour).Format(time.RFC3339)}}
+	late := &Auth{ID: "late", Provider: "codex", Metadata: map[string]any{"routing_tier": 3, "routing_weekly_reset_at": now.Add(2 * time.Hour).Format(time.RFC3339)}}
+	equal := func(want string) {
+		t.Helper()
+		opts := cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{"equal"}}}
+		got, err := selector.Pick(context.Background(), "codex", "model", opts, []*Auth{early, late})
+		if err != nil || got.ID != want {
+			t.Fatalf("got=%v err=%v want=%s", got, err, want)
+		}
+	}
+	equal("early")
+	early.Metadata["routing_weekly_reset_at"] = now.Add(3 * time.Hour).Format(time.RFC3339)
+	equal("early")
+}
+
+func TestSubscriptionFirstReturnUsesFallbackAndLCPBindings(t *testing.T) {
+	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{ReturnToPreferredTier: true})
+	defer selector.Stop()
+	pro := &Auth{ID: "pro", Provider: "claude", Metadata: map[string]any{"routing_tier": 1}, Disabled: true}
+	max := &Auth{ID: "max", Provider: "claude", Metadata: map[string]any{"routing_tier": 2}}
+	auths := []*Auth{pro, max}
+
+	// A subagent that inherits its parent's failover binding returns too.
+	parent := cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{"root"}}, Metadata: map[string]any{}}
+	if got, err := selector.Pick(context.Background(), "claude", "model", parent, auths); err != nil || got.ID != "max" {
+		t.Fatalf("parent got=%v err=%v", got, err)
+	}
+
+	// A conversation matched only by its content returns too, and its new binding sticks.
+	lcp := func(body string) *Auth {
+		t.Helper()
+		opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, OriginalRequest: []byte(body),
+			Metadata: map[string]any{cliproxyexecutor.CallerScopeMetadataKey: "caller"}}
+		got, err := selector.Pick(context.Background(), "claude", "model", opts, auths)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	first := `{"messages":[{"role":"system","content":"stable"},{"role":"user","content":"first"}]}`
+	grown := `{"messages":[{"role":"system","content":"stable"},{"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"user","content":"next"}]}`
+	if got := lcp(first); got.ID != "max" {
+		t.Fatalf("lcp first=%s", got.ID)
+	}
+	if got := lcp(grown); got.ID != "max" {
+		t.Fatalf("lcp kept=%s", got.ID)
+	}
+	pro.Disabled = false
+	if got := lcp(grown + " "); got.ID != "pro" {
+		t.Fatalf("lcp return=%s", got.ID)
+	}
+	if got := lcp(grown); got.ID != "pro" {
+		t.Fatalf("lcp after return=%s", got.ID)
+	}
+	subagent := cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{"root"}, "X-Claude-Code-Agent-Id": []string{"child"}}, Metadata: map[string]any{}}
+	if got, err := selector.Pick(context.Background(), "claude", "model", subagent, auths); err != nil || got.ID != "pro" {
+		t.Fatalf("subagent return got=%v err=%v", got, err)
+	}
 }
 
 func TestSubscriptionFirstManagerExecution(t *testing.T) {

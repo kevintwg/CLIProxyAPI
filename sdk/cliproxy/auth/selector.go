@@ -969,10 +969,22 @@ func (s *SessionAffinitySelector) Trees() *cliproxysession.InMemorySessionTreeSt
 // available is reused even when a higher-priority credential recovers. Credential priority
 // applies to cold bindings, requests without a session, and genuine bound-credential
 // failover, so the fallback selector only ever receives the highest available priority tier.
+// The exception is subscription-first with ReturnToPreferredTier, which rebinds a session as
+// soon as a strictly better subscription tier is available again.
 //
 // Note: The cache key includes provider, session ID, and model to handle cases where
 // a session uses multiple models (e.g., gemini-2.5-pro and gemini-3-flash-preview)
 // that may be supported by different auth credentials, and to avoid cross-provider conflicts.
+// preferredTierPick returns a strictly better-tier credential when subscription-first asks
+// bound sessions to return to their preferred plan.
+func (s *SessionAffinitySelector) preferredTierPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
+	subscription, ok := s.fallback.(*SubscriptionFirstSelector)
+	if !ok {
+		return nil
+	}
+	return subscription.preferredTierPick(ctx, provider, model, opts, bound, auths)
+}
+
 func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	entry := selectorLogEntry(ctx)
 	if opts.Metadata == nil {
@@ -1065,6 +1077,11 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
 		for _, auth := range available {
 			if auth.ID == cachedAuthID {
+				if preferred := s.preferredTierPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
+					bind(preferred.ID)
+					entry.Infof("session-affinity: returned to preferred tier | session=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, preferred.ID, provider, model)
+					return preferred, nil
+				}
 				bind(auth.ID)
 				entry.Infof("session-affinity: cache hit | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 				return auth, nil
@@ -1088,6 +1105,11 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 			for _, auth := range available {
 				if auth.ID == cachedAuthID {
 					if !isSubagent || s.subagentAffinity {
+						if preferred := s.preferredTierPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
+							bind(preferred.ID)
+							entry.Infof("session-affinity: returned to preferred tier | session=%s fallback=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, preferred.ID, provider, model)
+							return preferred, nil
+						}
 						bind(auth.ID)
 						if isFork {
 							entry.Infof("session-affinity: fork cache hit | session=%s parent=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, provider, model)
@@ -1153,6 +1175,11 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 		for _, auth := range available {
 			if auth == nil || auth.ID != match.AuthID {
 				continue
+			}
+			if s.preferredTierPick(ctx, provider, model, opts, auth, available) != nil {
+				// Rebind below through the fresh-binding path so the prefix records the preferred credential.
+				entry.Infof("session-affinity: LCP returning to preferred tier | session=%s from=%s provider=%s model=%s", truncateSessionID(match.SessionID), auth.ID, provider, model)
+				break
 			}
 			if match.SessionID != "" {
 				opts.Metadata[cliproxyexecutor.LCPAffinitySessionIDMetadataKey] = match.SessionID
