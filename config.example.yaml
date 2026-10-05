@@ -138,9 +138,11 @@ routing:
   # Codex OAuth accounts stop receiving new requests at 5% remaining in either allowance.
   # Read-only quota/reset-credit probes refresh every minute; banked resets are never redeemed.
   subscription-first-max-observation-age: "30m"
+  # With session affinity, an earlier usable weekly reset within the same tier also moves
+  # the session on its next request. Banked expiry and priority alone do not move it.
   subscription-first-prefer-weekly-reset: true
   # When true, a session bound to a worse tier (for example after its preferred plan hit a limit)
-  # moves back to a strictly better tier as soon as one is available. Equal tiers never move.
+  # moves back to a strictly better tier on its next request once one is available.
   # The first request after the move cannot reuse the old credential's prompt cache.
   subscription-first-return-to-preferred-tier: false
   # Enable universal session-sticky routing for all clients.
