@@ -264,12 +264,12 @@ func TestCodexObserverBackendRoutingProof(t *testing.T) {
 		used := 40
 		if account == "plus-early-bank" {
 			bankExpiry = reference.Add(time.Hour)
-			if phase.Load() == 1 {
-				used = 95
-			}
 		}
 		if account == "plus-early-weekly" {
 			weekly = reference.Add(24 * time.Hour)
+			if phase.Load() == 1 {
+				used = 95
+			}
 		}
 		if account == "pro-account" {
 			plan = "pro"
@@ -277,7 +277,7 @@ func TestCodexObserverBackendRoutingProof(t *testing.T) {
 			weekly = reference.Add(12 * time.Hour)
 		}
 		if phase.Load() == 3 && plan == "plus" {
-			bankExpiry = reference.Add(time.Hour)
+			weekly = reference.Add(48 * time.Hour)
 		}
 		switch r.URL.Path {
 		case "/usage":
@@ -300,10 +300,10 @@ func TestCodexObserverBackendRoutingProof(t *testing.T) {
 	observer := &codexRoutingObserver{manager: manager, request: manager.HttpRequest, now: func() time.Time { return now }, usageURL: server.URL + "/usage", creditsURL: server.URL + "/credits"}
 	selector := &coreauth.SubscriptionFirstSelector{}
 	expectations := []struct{ wanted, verdict string }{
-		{"plus-early-bank", "Plus tier wins before Pro; earliest usable bank expiry wins before earlier weekly reset"},
-		{"plus-early-weekly", "95 percent used excludes the account with 5 percent remaining"},
-		{"plus-early-bank", "fresh 40 percent usage restores eligibility and bank-expiry preference"},
-		{"plus-early-weekly", "equal bank expiry falls through to earliest weekly reset"},
+		{"plus-early-weekly", "Plus tier wins before Pro; earliest usable weekly reset wins before earlier bank expiry"},
+		{"plus-early-bank", "95 percent used excludes the account with 5 percent remaining"},
+		{"plus-early-weekly", "fresh 40 percent usage restores eligibility and weekly-reset preference"},
+		{"plus-early-bank", "equal weekly resets fall through to earliest usable bank expiry"},
 	}
 	for i, expectation := range expectations {
 		phase.Store(int32(i))

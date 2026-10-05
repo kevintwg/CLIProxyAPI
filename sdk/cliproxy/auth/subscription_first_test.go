@@ -41,6 +41,57 @@ func TestSubscriptionFirstRanking(t *testing.T) {
 	pick("b")
 }
 
+func TestSubscriptionFirstResetOrdering(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	enabled, disabled := true, false
+	for _, tt := range []struct {
+		name              string
+		preferWeeklyReset *bool
+		weeklyA, weeklyB  time.Duration
+		bankA, bankB      time.Duration
+		bankAgeB          time.Duration
+		tierA             int
+		want              string
+	}{
+		{name: "default weekly before banked", weeklyA: time.Hour, weeklyB: 2 * time.Hour, bankA: 2 * time.Hour, bankB: time.Hour, tierA: 1, want: "a"},
+		{name: "enabled weekly before banked", preferWeeklyReset: &enabled, weeklyA: time.Hour, weeklyB: 2 * time.Hour, bankA: 2 * time.Hour, bankB: time.Hour, tierA: 1, want: "a"},
+		{name: "disabled prefers banked", preferWeeklyReset: &disabled, weeklyA: time.Hour, weeklyB: 2 * time.Hour, bankA: 2 * time.Hour, bankB: time.Hour, tierA: 1, want: "b"},
+		{name: "equal weekly falls through to banked", weeklyA: time.Hour, weeklyB: time.Hour, bankA: 2 * time.Hour, bankB: time.Hour, tierA: 1, want: "b"},
+		{name: "missing weekly falls through to banked", bankA: 2 * time.Hour, bankB: time.Hour, tierA: 1, want: "b"},
+		{name: "usable weekly precedes missing weekly", weeklyA: time.Hour, bankA: 2 * time.Hour, bankB: time.Hour, tierA: 1, want: "a"},
+		{name: "usable weekly precedes expired weekly", weeklyA: -time.Hour, weeklyB: time.Hour, bankA: time.Hour, bankB: 2 * time.Hour, tierA: 1, want: "b"},
+		{name: "usable banked precedes missing banked", bankB: time.Hour, tierA: 1, want: "b"},
+		{name: "stale banked ignored", bankA: 2 * time.Hour, bankB: time.Hour, bankAgeB: time.Hour, tierA: 1, want: "a"},
+		{name: "expired banked ignored", bankA: 2 * time.Hour, bankB: -time.Hour, tierA: 1, want: "a"},
+		{name: "tier still comes first", weeklyA: 2 * time.Hour, weeklyB: time.Hour, bankA: 2 * time.Hour, bankB: time.Hour, tierA: 0, want: "a"},
+		{name: "priority breaks reset ties", weeklyA: time.Hour, weeklyB: time.Hour, bankA: time.Hour, bankB: time.Hour, tierA: 1, want: "a"},
+		{name: "disabled skips weekly without banked", preferWeeklyReset: &disabled, weeklyA: 2 * time.Hour, weeklyB: time.Hour, tierA: 1, want: "a"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			account := func(id string, tier int, weekly, bank, bankAge time.Duration) *Auth {
+				a := &Auth{ID: id, Provider: "codex", Metadata: map[string]any{"routing_tier": tier}}
+				if weekly != 0 {
+					a.Metadata["routing_weekly_reset_at"] = now.Add(weekly).Format(time.RFC3339)
+				}
+				if bank != 0 {
+					a.CodexRouting = &CodexRoutingObservation{BankedResetObservedAt: now.Add(-bankAge), BankedResetExpiresAt: now.Add(bank)}
+				}
+				return a
+			}
+			a := account("a", tt.tierA, tt.weeklyA, tt.bankA, 0)
+			a.Attributes = map[string]string{"priority": "99"}
+			b := account("b", 1, tt.weeklyB, tt.bankB, tt.bankAgeB)
+			selector := &SubscriptionFirstSelector{PreferWeeklyReset: tt.preferWeeklyReset, nowFunc: func() time.Time { return now }}
+			for _, candidates := range [][]*Auth{{a, b}, {b, a}} {
+				got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, candidates)
+				if err != nil || got == nil || got.ID != tt.want {
+					t.Fatalf("pick=%v err=%v want=%s", got, err, tt.want)
+				}
+			}
+		})
+	}
+}
+
 func TestSubscriptionRoutingProfileObservations(t *testing.T) {
 	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)

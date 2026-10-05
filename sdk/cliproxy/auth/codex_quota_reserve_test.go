@@ -49,36 +49,6 @@ func TestCodexReserveBoundaryAndRecovery(t *testing.T) {
 	}
 }
 
-func TestSubscriptionFirstBankedResetOrdering(t *testing.T) {
-	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
-	selector := &SubscriptionFirstSelector{nowFunc: func() time.Time { return now }}
-	account := func(id string, tier int, expiry, weekly time.Time) *Auth {
-		return &Auth{ID: id, Provider: "codex", Metadata: map[string]any{"routing_tier": tier, "routing_weekly_reset_at": weekly.Format(time.RFC3339)}, CodexRouting: &CodexRoutingObservation{BankedResetObservedAt: now, BankedResetExpiresAt: expiry}}
-	}
-	a := account("later-bank", 1, now.Add(2*time.Hour), now.Add(time.Hour))
-	b := account("earlier-bank", 1, now.Add(time.Hour), now.Add(2*time.Hour))
-	pick := func(want string) {
-		t.Helper()
-		got, err := selector.Pick(context.Background(), "codex", "", cliproxyexecutor.Options{}, []*Auth{a, b})
-		if err != nil || got.ID != want {
-			t.Fatalf("pick=%v err=%v want=%s", got, err, want)
-		}
-	}
-	pick(b.ID)
-	a.Metadata["routing_tier"] = 0
-	pick(a.ID)
-	a.Metadata["routing_tier"] = 1
-	a.CodexRouting.BankedResetExpiresAt = b.CodexRouting.BankedResetExpiresAt
-	pick(a.ID)
-	a.CodexRouting.BankedResetExpiresAt = time.Time{}
-	pick(b.ID)
-	b.CodexRouting.BankedResetObservedAt = now.Add(-time.Hour)
-	pick(a.ID)
-	b.CodexRouting.BankedResetObservedAt = now
-	b.CodexRouting.BankedResetExpiresAt = now
-	pick(a.ID)
-}
-
 func TestCodexReserveManagerSessionFailover(t *testing.T) {
 	now := time.Now()
 	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{})

@@ -90,9 +90,10 @@ shown with disabled fields because they cannot be edited through this API.
 Relay offers rotation, fill-first, weighted rotation and subscription order.
 The first three prefer higher priority accounts. Weighted rotation divides work
 within the highest available priority group; a zero weight excludes the account.
-Subscription order uses lower tier ranks first. Codex then prefers the earliest
-usable banked reset expiry, followed by the earliest usable weekly reset when
-weekly reset preference is enabled. Banked resets are never redeemed automatically.
+Subscription order uses lower tier ranks first, then the earliest usable weekly
+reset when weekly reset preference is enabled. Codex uses the earliest usable
+banked reset expiry to break remaining ties, or as the first reset criterion when
+weekly reset preference is disabled. Banked resets are never redeemed automatically.
 Codex accounts stop routing at 5% remaining quota, even with purchased usage
 credits. Existing conversations keep their assigned account until that cutoff or
 unavailability. Codex plan ranks are detected (free 0, go 1, plus 2, pro 3); Claude ranks
