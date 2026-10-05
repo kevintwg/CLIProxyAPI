@@ -67,6 +67,12 @@ export function Accounts({
     setError("");
     try {
       if (
+        item.runtime_only ||
+        credentials.some((other) => other.id === item.id && other.runtime_only)
+      ) {
+        throw new Error("This account has no saved connection to remove.");
+      }
+      if (
         credentials.some(
           (other) => other.id !== item.id && other.name === item.name,
         )
@@ -168,6 +174,11 @@ export function Accounts({
                     <span className="middot">·</span>
                     {item.label && item.email ? item.email : item.name}
                   </span>
+                  {item.runtime_only && (
+                    <p className="account-warning">
+                      This account has no saved connection to remove.
+                    </p>
+                  )}
                   {sharedConnection && (
                     <p className="account-warning">
                       This connection contains multiple accounts and cannot be
@@ -195,7 +206,9 @@ export function Accounts({
                   </button>
                   <button
                     className="button secondary account-toggle account-remove"
-                    disabled={busy !== null || sharedConnection}
+                    disabled={
+                      busy !== null || sharedConnection || item.runtime_only
+                    }
                     aria-label={`Remove ${item.label || item.email || item.name}`}
                     onClick={() => {
                       setRemoveError("");

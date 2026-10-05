@@ -833,3 +833,43 @@ it("does not remove siblings that share a saved connection even when search hide
   expect(screen.getByText(/cannot be removed separately/)).toBeInTheDocument();
   expect(remove).not.toHaveBeenCalled();
 });
+
+it("does not offer removal for a live-session account without saved credentials", async () => {
+  const api = new ManagementApi("test-key");
+  const remove = vi.spyOn(api, "removeCredential");
+  render(
+    <Accounts
+      api={api}
+      credentials={[{ ...account, runtime_only: true }]}
+      onAdd={vi.fn()}
+      onRefresh={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Remove Test account" });
+  expect(button).toBeDisabled();
+  expect(
+    screen.getByText("This account has no saved connection to remove."),
+  ).toBeInTheDocument();
+  await userEvent.click(button);
+  expect(remove).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("rechecks runtime-only status when the account inventory changes during confirmation", async () => {
+  const api = new ManagementApi("test-key");
+  const remove = vi.spyOn(api, "removeCredential");
+  const props = { api, onAdd: vi.fn(), onRefresh: vi.fn(), notify: vi.fn() };
+  const view = render(<Accounts {...props} credentials={[account]} />);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove Test account" }),
+  );
+  view.rerender(
+    <Accounts {...props} credentials={[{ ...account, runtime_only: true }]} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Remove account" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This account has no saved connection to remove.",
+  );
+  expect(remove).not.toHaveBeenCalled();
+});
