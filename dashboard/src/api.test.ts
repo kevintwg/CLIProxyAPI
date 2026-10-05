@@ -443,3 +443,12 @@ describe("Codex routing observations", () => {
     await expect(api.credentials()).rejects.toThrow();
   });
 });
+
+it("deletes only the encoded credential name", async () => {
+  respond({ status: "ok" });
+  await api.removeCredential(account);
+  expect(call()).toMatchObject({
+    url: `/v8/management/credentials?name=${encodeURIComponent(account.name)}`,
+    options: { method: "DELETE", body: undefined },
+  });
+});

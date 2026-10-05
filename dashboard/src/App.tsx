@@ -334,6 +334,18 @@ export function App() {
                 api={gateway.api}
                 onAdd={() => setDialog("account")}
                 onRefresh={refresh}
+                onRemoved={(name) => {
+                  const current = gatewayRef.current;
+                  if (!current || current.api !== gateway.api) return;
+                  const next = {
+                    ...current,
+                    credentials: current.credentials.filter(
+                      (item) => item.name !== name,
+                    ),
+                  };
+                  gatewayRef.current = next;
+                  setGateway(next);
+                }}
                 notify={notify}
               />
             ) : page === "models" ? (

@@ -717,3 +717,159 @@ it("uses banked reset freshness independently and distinguishes cutoff states", 
     screen.queryByRole("spinbutton", { name: /cutoff/i }),
   ).not.toBeInTheDocument();
 });
+
+describe("account removal", () => {
+  function setup(
+    api: ManagementApi,
+    refresh = vi.fn().mockResolvedValue(undefined),
+  ) {
+    const removed = vi.fn();
+    const notify = vi.fn();
+    render(
+      <Accounts
+        api={api}
+        credentials={[account]}
+        onAdd={vi.fn()}
+        onRefresh={refresh}
+        onRemoved={removed}
+        notify={notify}
+      />,
+    );
+    return { removed, notify };
+  }
+  it("names the account and cancels without deleting", async () => {
+    const api = new ManagementApi("test-key");
+    const remove = vi.spyOn(api, "removeCredential");
+    setup(api);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove Test account" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "Remove account?" });
+    expect(dialog).toHaveTextContent("Test account");
+    expect(dialog).toHaveTextContent("sign in again");
+    expect(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    ).toHaveFocus();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Cancel" }),
+    );
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("keeps a failed removal visible and allows retry", async () => {
+    const api = new ManagementApi("test-key");
+    vi.spyOn(api, "removeCredential").mockRejectedValue(
+      new Error("Delete failed"),
+    );
+    const { removed, notify } = setup(api);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove Test account" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove account" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Delete failed");
+    expect(removed).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Remove account" }),
+    ).toBeEnabled();
+  });
+  it("blocks duplicate deletion and distinguishes refresh failure", async () => {
+    const api = new ManagementApi("test-key");
+    let finish: () => void = () => {};
+    vi.spyOn(api, "removeCredential").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { removed, notify } = setup(
+      api,
+      vi.fn().mockRejectedValue(new Error("Offline")),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove Test account" }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove account" }),
+    );
+    expect(screen.getByRole("button", { name: /Removing/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(removed).not.toHaveBeenCalled();
+    finish();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Account removed, but the gateway could not refresh",
+    );
+    expect(api.removeCredential).toHaveBeenCalledTimes(1);
+    expect(removed).toHaveBeenCalledWith(account.name);
+    expect(notify).toHaveBeenCalledWith("Account removed");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+it("does not remove siblings that share a saved connection even when search hides one", async () => {
+  const api = new ManagementApi("test-key");
+  const remove = vi.spyOn(api, "removeCredential");
+  render(
+    <Accounts
+      api={api}
+      credentials={[
+        account,
+        { ...account, id: "sibling", label: "Other account" },
+      ]}
+      onAdd={vi.fn()}
+      onRefresh={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  await userEvent.type(
+    screen.getByLabelText("Search accounts"),
+    "Test account",
+  );
+  expect(
+    screen.getByRole("button", { name: "Remove Test account" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/cannot be removed separately/)).toBeInTheDocument();
+  expect(remove).not.toHaveBeenCalled();
+});
+
+it("does not offer removal for a live-session account without saved credentials", async () => {
+  const api = new ManagementApi("test-key");
+  const remove = vi.spyOn(api, "removeCredential");
+  render(
+    <Accounts
+      api={api}
+      credentials={[{ ...account, runtime_only: true }]}
+      onAdd={vi.fn()}
+      onRefresh={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  const button = screen.getByRole("button", { name: "Remove Test account" });
+  expect(button).toBeDisabled();
+  expect(
+    screen.getByText("This account has no saved connection to remove."),
+  ).toBeInTheDocument();
+  await userEvent.click(button);
+  expect(remove).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("rechecks runtime-only status when the account inventory changes during confirmation", async () => {
+  const api = new ManagementApi("test-key");
+  const remove = vi.spyOn(api, "removeCredential");
+  const props = { api, onAdd: vi.fn(), onRefresh: vi.fn(), notify: vi.fn() };
+  const view = render(<Accounts {...props} credentials={[account]} />);
+  await userEvent.click(
+    screen.getByRole("button", { name: "Remove Test account" }),
+  );
+  view.rerender(
+    <Accounts {...props} credentials={[{ ...account, runtime_only: true }]} />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Remove account" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This account has no saved connection to remove.",
+  );
+  expect(remove).not.toHaveBeenCalled();
+});
