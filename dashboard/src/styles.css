@@ -2164,3 +2164,25 @@ details form > button {
     font-size: 1rem;
   }
 }
+
+.account-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.account-actions .account-toggle {
+  margin-left: 0;
+}
+.button.account-remove {
+  color: var(--error);
+}
+.remove-description {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .account-actions {
+    width: 100%;
+    padding-left: 3.6rem;
+  }
+}

@@ -474,6 +474,13 @@ export class ManagementApi {
     });
   }
 
+  async removeCredential(value: Credential): Promise<void> {
+    await this.mutate(
+      `/credentials?name=${encodeURIComponent(value.name)}`,
+      "DELETE",
+    );
+  }
+
   async startLogin(
     provider: string,
     signal?: AbortSignal,

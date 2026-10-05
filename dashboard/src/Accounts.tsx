@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Pause, Play, Plus, Search, Users } from "lucide-react";
+import { Pause, Play, Plus, Search, Trash2, Users } from "lucide-react";
 import type { Credential, ManagementApi } from "./api";
 import {
   credentialState,
   EmptyState,
+  Dialog,
   ProviderMark,
   providerName,
   Status,
@@ -14,18 +15,22 @@ export function Accounts({
   api,
   onAdd,
   onRefresh,
+  onRemoved,
   notify,
 }: {
   credentials: Credential[];
   api: ManagementApi;
   onAdd: () => void;
   onRefresh: () => Promise<void>;
+  onRemoved?: (name: string) => void;
   notify: (message: string) => void;
 }) {
   const [filter, setFilter] = useState("All accounts");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [removing, setRemoving] = useState<Credential | null>(null);
+  const [removeError, setRemoveError] = useState("");
   const filtered = credentials.filter((item) => {
     const matchesQuery =
       `${providerName(item.provider)} ${item.label ?? ""} ${item.email ?? ""} ${item.name}`
@@ -50,6 +55,34 @@ export function Accounts({
         reason instanceof Error
           ? reason.message
           : "Could not update this account. Refresh before trying again.",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+  async function remove(item: Credential) {
+    if (busy !== null) return;
+    setBusy(item.name);
+    setRemoveError("");
+    try {
+      await api.removeCredential(item);
+    } catch (reason) {
+      setRemoveError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not remove this account. Refresh before trying again.",
+      );
+      setBusy(null);
+      return;
+    }
+    onRemoved?.(item.name);
+    setRemoving(null);
+    notify("Account removed");
+    try {
+      await onRefresh();
+    } catch {
+      setError(
+        "Account removed, but the gateway could not refresh. Refresh to update the list and models.",
       );
     } finally {
       setBusy(null);
@@ -127,23 +160,74 @@ export function Accounts({
                   )}
                 </div>
                 <Status {...status} />
-                <button
-                  className="button secondary account-toggle"
-                  disabled={busy !== null}
-                  aria-label={`${item.disabled ? "Resume" : "Pause"} ${item.label || item.email || item.name}`}
-                  onClick={() => void toggle(item)}
-                >
-                  {item.disabled ? <Play size={14} /> : <Pause size={14} />}
-                  {busy === item.name
-                    ? "Updating…"
-                    : item.disabled
-                      ? "Resume"
-                      : "Pause"}
-                </button>
+                <div className="account-actions">
+                  <button
+                    className="button secondary account-toggle"
+                    disabled={busy !== null}
+                    aria-label={`${item.disabled ? "Resume" : "Pause"} ${item.label || item.email || item.name}`}
+                    onClick={() => void toggle(item)}
+                  >
+                    {item.disabled ? <Play size={14} /> : <Pause size={14} />}
+                    {busy === item.name
+                      ? "Updating…"
+                      : item.disabled
+                        ? "Resume"
+                        : "Pause"}
+                  </button>
+                  <button
+                    className="button secondary account-toggle account-remove"
+                    disabled={busy !== null}
+                    aria-label={`Remove ${item.label || item.email || item.name}`}
+                    onClick={() => {
+                      setRemoveError("");
+                      setRemoving(item);
+                    }}
+                  >
+                    <Trash2 size={14} /> Remove
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
+      )}
+      {removing && (
+        <Dialog
+          title="Remove account?"
+          onClose={() => {
+            if (busy === null) setRemoving(null);
+          }}
+        >
+          <p className="remove-description">
+            Remove{" "}
+            <strong>{removing.email || removing.label || removing.name}</strong>{" "}
+            from Relay? Its saved connection will be deleted. To reconnect,
+            you’ll need to sign in again.
+          </p>
+          {removeError && (
+            <p className="inline-error" role="alert">
+              {removeError}
+            </p>
+          )}
+          <div className="dialog-actions">
+            <button
+              className="button secondary"
+              autoFocus
+              disabled={busy !== null}
+              onClick={() => setRemoving(null)}
+            >
+              Cancel
+            </button>
+            <button
+              className="button secondary account-remove"
+              disabled={busy !== null}
+              onClick={() => void remove(removing)}
+            >
+              <Trash2 size={16} />{" "}
+              {busy !== null ? "Removing…" : "Remove account"}
+            </button>
+          </div>
+        </Dialog>
       )}
       <div className="list-footer">
         <span>

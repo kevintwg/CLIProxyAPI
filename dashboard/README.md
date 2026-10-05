@@ -9,7 +9,7 @@ server's existing remote management, disabled-panel and Home-mode policies.
 
 - Account availability and current request counters.
 - Provider sign-in, status polling, cancellation and manual callback submission.
-- Pause and resume signed-in accounts.
+- Pause, resume and remove signed-in accounts. Removal deletes the saved connection; reconnecting requires signing in again.
 - Searchable model library from connected, unpaused accounts.
 - Persisted routing preferences and copyable client connection details.
 - Desktop, mobile, light, dark and reduced-motion interfaces.
