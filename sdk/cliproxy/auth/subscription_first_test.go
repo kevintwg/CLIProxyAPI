@@ -184,7 +184,7 @@ func TestSubscriptionFirstAffinityReturnsToPreferredTier(t *testing.T) {
 	pick("busy", "pro") // Preferred tier recovered: the session returns on its next request.
 	pick("busy", "pro")
 
-	// A strictly worse binding is required; an equal tier never moves, whatever the reset order says.
+	// Equal-tier sessions also move when another account has an earlier usable weekly reset.
 	now := time.Now()
 	early := &Auth{ID: "early", Provider: "codex", Metadata: map[string]any{"routing_tier": 3, "routing_weekly_reset_at": now.Add(time.Hour).Format(time.RFC3339)}}
 	late := &Auth{ID: "late", Provider: "codex", Metadata: map[string]any{"routing_tier": 3, "routing_weekly_reset_at": now.Add(2 * time.Hour).Format(time.RFC3339)}}
@@ -198,7 +198,80 @@ func TestSubscriptionFirstAffinityReturnsToPreferredTier(t *testing.T) {
 	}
 	equal("early")
 	early.Metadata["routing_weekly_reset_at"] = now.Add(3 * time.Hour).Format(time.RFC3339)
-	equal("early")
+	equal("late")
+	equal("late")
+}
+
+func TestSubscriptionFirstAffinityWeeklyReset(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	enabled, disabled := true, false
+	for _, tt := range []struct {
+		name           string
+		prefer         *bool
+		candidateReset time.Duration
+		boundReset     time.Duration
+		candidateTier  int
+		unavailable    bool
+		reserve        bool
+		observed       bool
+		stale          bool
+		want           string
+	}{
+		{name: "higher tier never overrides", candidateTier: 2, candidateReset: time.Hour, boundReset: 2 * time.Hour, want: "bound"},
+		{name: "lower tier needs return setting", candidateTier: -1, candidateReset: time.Hour, boundReset: 2 * time.Hour, want: "bound"},
+		{name: "default switches earlier", candidateReset: time.Hour, boundReset: 2 * time.Hour, want: "candidate"},
+		{name: "enabled switches earlier", prefer: &enabled, candidateReset: time.Hour, boundReset: 2 * time.Hour, want: "candidate"},
+		{name: "disabled keeps binding", prefer: &disabled, candidateReset: time.Hour, boundReset: 2 * time.Hour, want: "bound"},
+		{name: "equal reset keeps binding", candidateReset: 2 * time.Hour, boundReset: 2 * time.Hour, want: "bound"},
+		{name: "later reset keeps binding", candidateReset: 3 * time.Hour, boundReset: 2 * time.Hour, want: "bound"},
+		{name: "expired reset ignored", candidateReset: -time.Hour, boundReset: 2 * time.Hour, want: "bound"},
+		{name: "missing resets keep binding", want: "bound"},
+		{name: "known reset precedes unknown", candidateReset: time.Hour, want: "candidate"},
+		{name: "unavailable earlier reset ignored", candidateReset: time.Hour, boundReset: 2 * time.Hour, unavailable: true, want: "bound"},
+		{name: "quota reserve excludes earlier account", candidateReset: time.Hour, boundReset: 2 * time.Hour, reserve: true, want: "bound"},
+		{name: "fresh observed earlier reset switches", candidateReset: time.Hour, boundReset: 2 * time.Hour, observed: true, want: "candidate"},
+		{name: "expired bound reset is replaced", candidateReset: time.Hour, boundReset: -time.Hour, want: "candidate"},
+		{name: "stale observed reset ignored", candidateReset: time.Hour, boundReset: 2 * time.Hour, stale: true, want: "bound"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{PreferWeeklyReset: tt.prefer, nowFunc: func() time.Time { return now }})
+			defer selector.Stop()
+			bound := &Auth{ID: "bound", Provider: "codex", Metadata: map[string]any{"routing_tier": 1}}
+			candidate := &Auth{ID: "candidate", Provider: "codex", Disabled: true, Metadata: map[string]any{"routing_tier": 1}, Attributes: map[string]string{"priority": "99"}, CodexRouting: &CodexRoutingObservation{BankedResetObservedAt: now, BankedResetExpiresAt: now.Add(time.Hour)}}
+			candidate.Metadata["routing_tier"] = 1 + tt.candidateTier
+			auths := []*Auth{bound, candidate}
+			opts := cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{"weekly-session"}}}
+			pick := func(want string) {
+				t.Helper()
+				got, err := selector.Pick(context.Background(), "codex", "model", opts, auths)
+				if err != nil || got == nil || got.ID != want {
+					t.Fatalf("pick=%v err=%v want=%s", got, err, want)
+				}
+			}
+			pick("bound")
+			candidate.Disabled = tt.unavailable
+			if tt.boundReset != 0 {
+				bound.Metadata["routing_weekly_reset_at"] = now.Add(tt.boundReset).Format(time.RFC3339)
+			}
+			if tt.candidateReset != 0 {
+				candidate.Metadata["routing_weekly_reset_at"] = now.Add(tt.candidateReset).Format(time.RFC3339)
+			}
+			if tt.stale || tt.observed {
+				delete(candidate.Metadata, "routing_weekly_reset_at")
+				observedAt := now
+				if tt.stale {
+					observedAt = now.Add(-time.Hour)
+				}
+				candidate.Quota = QuotaState{ObservedAt: observedAt, Signals: map[string]string{"x-codex-secondary-window-minutes": "10080", "x-codex-secondary-reset-at": now.Add(tt.candidateReset).Format(time.RFC3339)}}
+			}
+			if tt.reserve {
+				candidate.Metadata["access_token"] = "synthetic"
+				candidate.CodexRouting.Primary = &CodexRoutingWindow{ObservedAt: time.Now(), UsedPercent: 95}
+			}
+			pick(tt.want)
+			pick(tt.want) // The replacement binding survives the following request.
+		})
+	}
 }
 
 func TestSubscriptionFirstReturnUsesFallbackAndLCPBindings(t *testing.T) {
@@ -243,6 +316,45 @@ func TestSubscriptionFirstReturnUsesFallbackAndLCPBindings(t *testing.T) {
 	subagent := cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{"root"}, "X-Claude-Code-Agent-Id": []string{"child"}}, Metadata: map[string]any{}}
 	if got, err := selector.Pick(context.Background(), "claude", "model", subagent, auths); err != nil || got.ID != "pro" {
 		t.Fatalf("subagent return got=%v err=%v", got, err)
+	}
+}
+
+func TestSubscriptionFirstWeeklyResetUsesFallbackAndLCPBindings(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{nowFunc: func() time.Time { return now }})
+	defer selector.Stop()
+	bound := &Auth{ID: "bound", Provider: "claude", Metadata: map[string]any{"routing_tier": 1, "routing_weekly_reset_at": now.Add(2 * time.Hour).Format(time.RFC3339)}}
+	early := &Auth{ID: "early", Provider: "claude", Disabled: true, Metadata: map[string]any{"routing_tier": 1, "routing_weekly_reset_at": now.Add(time.Hour).Format(time.RFC3339)}}
+	lower := &Auth{ID: "lower", Provider: "claude", Disabled: true, Metadata: map[string]any{"routing_tier": 0}}
+	auths := []*Auth{bound, early, lower}
+	parent := cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{"weekly-root"}}, Metadata: map[string]any{}}
+	if got, err := selector.Pick(context.Background(), "claude", "model", parent, auths); err != nil || got.ID != "bound" {
+		t.Fatalf("parent=%v err=%v", got, err)
+	}
+	first := `{"messages":[{"role":"system","content":"stable"},{"role":"user","content":"first"}]}`
+	grown := `{"messages":[{"role":"system","content":"stable"},{"role":"user","content":"first"},{"role":"assistant","content":"answer"},{"role":"user","content":"next"}]}`
+	lcp := func(body, want string) {
+		t.Helper()
+		opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAI, OriginalRequest: []byte(body), Metadata: map[string]any{cliproxyexecutor.CallerScopeMetadataKey: "weekly-caller"}}
+		got, err := selector.Pick(context.Background(), "claude", "model", opts, auths)
+		if err != nil || got == nil || got.ID != want {
+			t.Fatalf("lcp=%v err=%v want=%s", got, err, want)
+		}
+		if opts.Metadata[cliproxyexecutor.CanonicalSessionIDMetadataKey] == "" {
+			t.Fatal("LCP binding lost canonical session ID")
+		}
+	}
+	lcp(first, "bound")
+	lcp(grown, "bound")
+	early.Disabled = false
+	lower.Disabled = false
+	lcp(grown, "early")
+	lcp(grown, "early")
+	child := cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{"weekly-root"}, "X-Claude-Code-Agent-Id": []string{"child"}}, Metadata: map[string]any{}}
+	for range 2 {
+		if got, err := selector.Pick(context.Background(), "claude", "model", child, auths); err != nil || got.ID != "early" {
+			t.Fatalf("child=%v err=%v", got, err)
+		}
 	}
 }
 

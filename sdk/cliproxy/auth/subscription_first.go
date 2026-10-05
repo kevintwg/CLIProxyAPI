@@ -231,7 +231,7 @@ func observedResetTime(raw string) time.Time {
 }
 
 // SubscriptionFirstSelector ranks by tier, weekly reset when enabled, then banked-reset expiry.
-// Existing affinity bindings are authoritative; this policy chooses only cold/failover bindings.
+// Affinity can move to an earlier weekly reset within a tier, or return to a better tier when enabled.
 type SubscriptionFirstSelector struct {
 	MaxObservationAge time.Duration
 	PreferWeeklyReset *bool
@@ -256,28 +256,42 @@ func (s *SubscriptionFirstSelector) routingTier(a *Auth, now time.Time) int {
 	return 1001
 }
 
-// preferredTierPick returns the selector's pick when it lies in a strictly better tier than the
-// bound credential. Equal tiers never move a binding, so reset ordering cannot make sessions flap.
-func (s *SubscriptionFirstSelector) preferredTierPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
-	if s == nil || !s.ReturnToPreferredTier || bound == nil {
+// preferredAffinityPick considers only candidates allowed to replace a healthy binding.
+// Banked expiry, priority, and account ID alone never trigger a move.
+func (s *SubscriptionFirstSelector) preferredAffinityPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
+	if s == nil || bound == nil {
+		return nil
+	}
+	preferWeekly := s.PreferWeeklyReset == nil || *s.PreferWeeklyReset
+	if !s.ReturnToPreferredTier && !preferWeekly {
 		return nil
 	}
 	now := time.Now()
 	if s.nowFunc != nil {
 		now = s.nowFunc()
 	}
-	boundTier, better := s.routingTier(bound, now), false
+	boundTier := s.routingTier(bound, now)
+	boundReset := observedResetTime(SubscriptionRoutingProfile(bound, now, s.MaxObservationAge).WeeklyResetAt)
+	candidates := []*Auth{bound}
 	for _, a := range auths {
-		if a != nil && a.ID != bound.ID && s.routingTier(a, now) < boundTier {
-			better = true
-			break
+		if a == nil || a.ID == bound.ID {
+			continue
+		}
+		tier := s.routingTier(a, now)
+		if tier < boundTier && s.ReturnToPreferredTier {
+			candidates = append(candidates, a)
+		} else if tier == boundTier && preferWeekly {
+			reset := observedResetTime(SubscriptionRoutingProfile(a, now, s.MaxObservationAge).WeeklyResetAt)
+			if !reset.IsZero() && (boundReset.IsZero() || reset.Before(boundReset)) {
+				candidates = append(candidates, a)
+			}
 		}
 	}
-	if !better {
+	if len(candidates) == 1 {
 		return nil
 	}
-	pick, err := s.Pick(ctx, provider, model, opts, auths)
-	if err != nil || pick == nil || pick.ID == bound.ID || s.routingTier(pick, now) >= boundTier {
+	pick, err := s.Pick(ctx, provider, model, opts, candidates)
+	if err != nil || pick == nil || pick.ID == bound.ID {
 		return nil
 	}
 	return pick

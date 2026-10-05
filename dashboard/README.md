@@ -95,8 +95,11 @@ reset when weekly reset preference is enabled. Codex uses the earliest usable
 banked reset expiry to break remaining ties, or as the first reset criterion when
 weekly reset preference is disabled. Banked resets are never redeemed automatically.
 Codex accounts stop routing at 5% remaining quota, even with purchased usage
-credits. Existing conversations keep their assigned account until that cutoff or
-unavailability. Codex plan ranks are detected (free 0, go 1, plus 2, pro 3); Claude ranks
+credits. Existing conversations switch on their next request when an eligible
+account in the same tier has an earlier usable weekly reset and weekly preference
+is enabled. They also switch at the quota cutoff or unavailability, or return to
+a lower tier when that option is enabled. Banked expiry and priority changes
+alone do not move existing conversations. Codex plan ranks are detected (free 0, go 1, plus 2, pro 3); Claude ranks
 can be entered manually. Unknown ranks are used last.
 
 Codex quota and banked-reset observations refresh on startup and every minute.

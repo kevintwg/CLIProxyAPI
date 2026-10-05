@@ -975,14 +975,13 @@ func (s *SessionAffinitySelector) Trees() *cliproxysession.InMemorySessionTreeSt
 // Note: The cache key includes provider, session ID, and model to handle cases where
 // a session uses multiple models (e.g., gemini-2.5-pro and gemini-3-flash-preview)
 // that may be supported by different auth credentials, and to avoid cross-provider conflicts.
-// preferredTierPick returns a strictly better-tier credential when subscription-first asks
-// bound sessions to return to their preferred plan.
-func (s *SessionAffinitySelector) preferredTierPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
+// preferredAffinityPick returns a permitted tier or weekly-reset improvement for a bound session.
+func (s *SessionAffinitySelector) preferredAffinityPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
 	subscription, ok := s.fallback.(*SubscriptionFirstSelector)
 	if !ok {
 		return nil
 	}
-	return subscription.preferredTierPick(ctx, provider, model, opts, bound, auths)
+	return subscription.preferredAffinityPick(ctx, provider, model, opts, bound, auths)
 }
 
 func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
@@ -1077,9 +1076,9 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
 		for _, auth := range available {
 			if auth.ID == cachedAuthID {
-				if preferred := s.preferredTierPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
+				if preferred := s.preferredAffinityPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
 					bind(preferred.ID)
-					entry.Infof("session-affinity: returned to preferred tier | session=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, preferred.ID, provider, model)
+					entry.Infof("session-affinity: moved to preferred account | session=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, preferred.ID, provider, model)
 					return preferred, nil
 				}
 				bind(auth.ID)
@@ -1105,9 +1104,9 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 			for _, auth := range available {
 				if auth.ID == cachedAuthID {
 					if !isSubagent || s.subagentAffinity {
-						if preferred := s.preferredTierPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
+						if preferred := s.preferredAffinityPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
 							bind(preferred.ID)
-							entry.Infof("session-affinity: returned to preferred tier | session=%s fallback=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, preferred.ID, provider, model)
+							entry.Infof("session-affinity: moved to preferred account | session=%s fallback=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, preferred.ID, provider, model)
 							return preferred, nil
 						}
 						bind(auth.ID)
@@ -1171,14 +1170,15 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 		return nil, true, errAvailable
 	}
 
+	var preferred *Auth
 	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
 		for _, auth := range available {
 			if auth == nil || auth.ID != match.AuthID {
 				continue
 			}
-			if s.preferredTierPick(ctx, provider, model, opts, auth, available) != nil {
+			if preferred = s.preferredAffinityPick(ctx, provider, model, opts, auth, available); preferred != nil {
 				// Rebind below through the fresh-binding path so the prefix records the preferred credential.
-				entry.Infof("session-affinity: LCP returning to preferred tier | session=%s from=%s provider=%s model=%s", truncateSessionID(match.SessionID), auth.ID, provider, model)
+				entry.Infof("session-affinity: LCP moving to preferred account | session=%s from=%s provider=%s model=%s", truncateSessionID(match.SessionID), auth.ID, provider, model)
 				break
 			}
 			if match.SessionID != "" {
@@ -1223,9 +1223,13 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	if selectorUsesSubscriptionFirst(s.fallback) {
 		fallbackAuths = available
 	}
-	auth, errPick := s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
-	if errPick != nil {
-		return nil, true, errPick
+	auth := preferred
+	if auth == nil {
+		var errPick error
+		auth, errPick = s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
+		if errPick != nil {
+			return nil, true, errPick
+		}
 	}
 	if auth == nil {
 		return nil, true, &Error{Code: "auth_not_found", Message: "selector returned no auth"}

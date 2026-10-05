@@ -460,9 +460,9 @@ export function Settings({
                     {group.id === "codex" && (
                       <p>
                         Codex accounts stop routing at 5% remaining quota, even
-                        with purchased usage credits. Existing conversations
-                        stay on their account until this cutoff or
-                        unavailability. Banked resets are never redeemed
+                        with purchased usage credits. Conversations switch when
+                        their account reaches this cutoff or becomes
+                        unavailable. Banked resets are never redeemed
                         automatically.
                       </p>
                     )}
@@ -481,7 +481,11 @@ export function Settings({
                         earliest usable weekly reset. Codex then uses the
                         earliest usable banked reset expiry to break remaining
                         ties. When weekly reset preference is disabled, Codex
-                        considers banked reset expiry first.
+                        considers banked reset expiry first. With weekly
+                        preference enabled, existing conversations switch on
+                        their next request to an eligible account in the same
+                        rank with an earlier usable weekly reset. Banked expiry
+                        and priority alone do not move conversations.
                       </p>
                       <p>
                         Provider observations come from request traffic. Stale
