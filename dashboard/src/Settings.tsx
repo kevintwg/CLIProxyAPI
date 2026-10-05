@@ -38,7 +38,7 @@ const choices = [
     id: "subscription-first" as const,
     icon: ArrowDownWideNarrow,
     detail:
-      "Use the lowest subscription tier first. Codex then prefers the earliest usable banked reset expiry, then the earliest weekly reset.",
+      "Use the lowest subscription tier first, then the earliest usable weekly reset when enabled. Codex uses banked reset expiry to break remaining ties.",
   },
 ];
 
@@ -476,11 +476,12 @@ export function Settings({
                             : "Unknown ranks are used last."}
                       </p>
                       <p>
-                        Lower ranks are preferred within each provider. Codex
-                        accounts with equal ranks prefer the earliest usable
-                        banked reset expiry. With weekly reset preference
-                        enabled, the earliest usable weekly reset breaks
-                        remaining ties.
+                        Lower ranks are preferred within each provider. With
+                        weekly reset preference enabled, equal ranks prefer the
+                        earliest usable weekly reset. Codex then uses the
+                        earliest usable banked reset expiry to break remaining
+                        ties. When weekly reset preference is disabled, Codex
+                        considers banked reset expiry first.
                       </p>
                       <p>
                         Provider observations come from request traffic. Stale

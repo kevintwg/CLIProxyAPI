@@ -230,7 +230,7 @@ func observedResetTime(raw string) time.Time {
 	return time.Time{}
 }
 
-// SubscriptionFirstSelector ranks by tier, banked-reset expiry, then weekly reset.
+// SubscriptionFirstSelector ranks by tier, weekly reset when enabled, then banked-reset expiry.
 // Existing affinity bindings are authoritative; this policy chooses only cold/failover bindings.
 type SubscriptionFirstSelector struct {
 	MaxObservationAge time.Duration
@@ -310,17 +310,6 @@ func (s *SubscriptionFirstSelector) Pick(ctx context.Context, provider, model st
 		if ta != tb {
 			return ta < tb
 		}
-		if pa.BankedResetExpiresAt != pb.BankedResetExpiresAt {
-			if pa.BankedResetExpiresAt == "" {
-				return false
-			}
-			if pb.BankedResetExpiresAt == "" {
-				return true
-			}
-			ra, _ := time.Parse(time.RFC3339Nano, pa.BankedResetExpiresAt)
-			rb, _ := time.Parse(time.RFC3339Nano, pb.BankedResetExpiresAt)
-			return ra.Before(rb)
-		}
 		if preferReset && pa.WeeklyResetAt != pb.WeeklyResetAt {
 			if pa.WeeklyResetAt == "" {
 				return false
@@ -330,6 +319,17 @@ func (s *SubscriptionFirstSelector) Pick(ctx context.Context, provider, model st
 			}
 			ra, _ := time.Parse(time.RFC3339, pa.WeeklyResetAt)
 			rb, _ := time.Parse(time.RFC3339, pb.WeeklyResetAt)
+			return ra.Before(rb)
+		}
+		if pa.BankedResetExpiresAt != pb.BankedResetExpiresAt {
+			if pa.BankedResetExpiresAt == "" {
+				return false
+			}
+			if pb.BankedResetExpiresAt == "" {
+				return true
+			}
+			ra, _ := time.Parse(time.RFC3339Nano, pa.BankedResetExpiresAt)
+			rb, _ := time.Parse(time.RFC3339Nano, pb.BankedResetExpiresAt)
 			return ra.Before(rb)
 		}
 		if authPriority(a) != authPriority(b) {
