@@ -807,3 +807,29 @@ describe("account removal", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
+
+it("does not remove siblings that share a saved connection even when search hides one", async () => {
+  const api = new ManagementApi("test-key");
+  const remove = vi.spyOn(api, "removeCredential");
+  render(
+    <Accounts
+      api={api}
+      credentials={[
+        account,
+        { ...account, id: "sibling", label: "Other account" },
+      ]}
+      onAdd={vi.fn()}
+      onRefresh={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+  await userEvent.type(
+    screen.getByLabelText("Search accounts"),
+    "Test account",
+  );
+  expect(
+    screen.getByRole("button", { name: "Remove Test account" }),
+  ).toBeDisabled();
+  expect(screen.getByText(/cannot be removed separately/)).toBeInTheDocument();
+  expect(remove).not.toHaveBeenCalled();
+});

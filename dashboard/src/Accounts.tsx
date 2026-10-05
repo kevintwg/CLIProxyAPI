@@ -64,7 +64,17 @@ export function Accounts({
     if (busy !== null) return;
     setBusy(item.name);
     setRemoveError("");
+    setError("");
     try {
+      if (
+        credentials.some(
+          (other) => other.id !== item.id && other.name === item.name,
+        )
+      ) {
+        throw new Error(
+          "This connection contains multiple accounts and cannot be removed separately.",
+        );
+      }
       await api.removeCredential(item);
     } catch (reason) {
       setRemoveError(
@@ -143,6 +153,9 @@ export function Accounts({
         <div className="account-list">
           {filtered.map((item) => {
             const status = credentialState(item);
+            const sharedConnection = credentials.some(
+              (other) => other.id !== item.id && other.name === item.name,
+            );
             return (
               <div className="account-row" key={item.id}>
                 <ProviderMark provider={item.provider} />
@@ -155,6 +168,12 @@ export function Accounts({
                     <span className="middot">·</span>
                     {item.label && item.email ? item.email : item.name}
                   </span>
+                  {sharedConnection && (
+                    <p className="account-warning">
+                      This connection contains multiple accounts and cannot be
+                      removed separately.
+                    </p>
+                  )}
                   {item.status_message && status.tone === "amber" && (
                     <p className="account-warning">{item.status_message}</p>
                   )}
@@ -176,7 +195,7 @@ export function Accounts({
                   </button>
                   <button
                     className="button secondary account-toggle account-remove"
-                    disabled={busy !== null}
+                    disabled={busy !== null || sharedConnection}
                     aria-label={`Remove ${item.label || item.email || item.name}`}
                     onClick={() => {
                       setRemoveError("");
