@@ -671,6 +671,24 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 	entry["failed"] = auth.Failed
 	entry["recent_requests"] = auth.RecentRequestsSnapshot(time.Now())
 	entry["quota"] = quotaObservationPayloadForProvider(auth.Provider, auth.Quota)
+	h.mu.Lock()
+	maxObservationAge := 30 * time.Minute
+	if h.cfg != nil {
+		maxObservationAge = h.cfg.Routing.SubscriptionFirstObservationAge()
+	}
+	h.mu.Unlock()
+	routingProfile := coreauth.SubscriptionRoutingProfile(auth, time.Now(), maxObservationAge)
+	entry["routing_profile"] = routingProfile
+	if tier, ok := coreauth.ManualRoutingTier(auth); ok {
+		entry["routing_tier"] = tier
+	}
+	if reset := coreauth.ManualRoutingWeeklyReset(auth); reset != "" {
+		entry["routing_weekly_reset_at"] = reset
+	}
+	if routingProfile.Plan != "" {
+		entry["plan_type"] = routingProfile.Plan
+	}
+
 	if modelQuotas := modelQuotaObservationPayload(auth.Provider, auth.ModelStates); len(modelQuotas) > 0 {
 		entry["model_quotas"] = modelQuotas
 	}

@@ -122,6 +122,9 @@ func (s *Service) Run(ctx context.Context) error {
 		redisqueue.SetEnabled(true)
 	}
 
+	s.startCodexRoutingObserver(ctx)
+	defer s.stopCodexRoutingObserver()
+
 	// handlers no longer depend on legacy clients; pass nil slice initially
 	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.serverOptions...)
 	s.syncPluginRuntimeConfig(ctx)
@@ -280,6 +283,8 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			homeForwarder.Stop()
 		}
 		s.homeLifecycleMu.Unlock()
+
+		s.stopCodexRoutingObserver()
 
 		// legacy refresh loop removed; only stopping core auth manager below
 

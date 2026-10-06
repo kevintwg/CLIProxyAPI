@@ -1,0 +1,90 @@
+:root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light dark;
+  --canvas: #f8f9fc;
+  --surface: #fff;
+  --surface-soft: #f7f8fa;
+  --ink: #202531;
+  --secondary: #505869;
+  --muted: #697284;
+  --line: #e6e9ef;
+  --line-soft: #eef0f4;
+  --line-strong: #cbd2de;
+  --sidebar: #eff1f7c9;
+  --mobile-sidebar: #eff1f7f5;
+  --sidebar-line: #e2e6ee;
+  --toolbar: #f8f9fcd9;
+  --accent: #3266da;
+  --accent-text: #3266da;
+  --accent-hover: #2454c0;
+  --accent-soft: #e0e8fb;
+  --focus: #85a9ff;
+  --hover: #222f4710;
+  --avatar: #e6eaf3;
+  --green: #28714f;
+  --green-soft: #eaf5ef;
+  --amber: #8c5a19;
+  --amber-soft: #fbf1df;
+  --error: #a5303c;
+  --error-soft: #fdf0f1;
+  --error-line: #f0ccd1;
+  --blue-panel: #f0f4fe;
+  --blue-line: #dfe7f6;
+  --blue-symbol: #e0e9fc;
+  --gray-tint: #edf0f4;
+  --selected-surface: #f5f8ff;
+  --welcome: linear-gradient(110deg, #fff 25%, #f0f4fc 100%);
+  --map-line: #d2dcef;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #171a20;
+    --surface: #20242c;
+    --surface-soft: #252a33;
+    --ink: #f0f2f7;
+    --secondary: #c0c7d5;
+    --muted: #a0aabd;
+    --line: #343b47;
+    --line-soft: #2d343e;
+    --line-strong: #536077;
+    --sidebar: #20242ce6;
+    --mobile-sidebar: #20242cfa;
+    --sidebar-line: #343b47;
+    --toolbar: #171a20db;
+    --accent: #3266da;
+    --accent-text: #9ab9ff;
+    --accent-hover: #3d6bcf;
+    --accent-soft: #273857;
+    --focus: #8bacf7;
+    --hover: #e3edff12;
+    --avatar: #343e50;
+    --green: #8ad6b0;
+    --green-soft: #233b31;
+    --amber: #edc08b;
+    --amber-soft: #423526;
+    --error: #ffb5bf;
+    --error-soft: #43272e;
+    --error-line: #62414b;
+    --blue-panel: #222d43;
+    --blue-line: #36465f;
+    --blue-symbol: #304568;
+    --gray-tint: #303642;
+    --selected-surface: #26334d;
+    --welcome: linear-gradient(110deg, #20242c 25%, #232f47 100%);
+    --map-line: #485775;
+  }
+  .nav-item.active,
+  .text-button,
+  .text-link:hover,
+  .add-provider,
+  .panel-symbol,
+  .welcome-symbol,
+  .map-relay svg {
+    color: #9ab9ff;
+  }
+}

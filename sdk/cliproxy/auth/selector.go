@@ -506,7 +506,7 @@ func getSelectorAvailableAuthsWithPriorityMode(ctx context.Context, auths []*Aut
 			// The manager already resolved each credential's upstream model and supplied
 			// ID-sorted candidates. Rechecking the alias or an empty model would apply
 			// unrelated cooldowns. Affinity bindings may span all priority tiers, but
-			// fallback selection must still use the highest available tier.
+			// conventional fallback selection uses the highest available tier.
 			if !allPriorities {
 				return highestPriorityAuths(auths), nil
 			}
@@ -827,6 +827,9 @@ func isAuthBlockedForModel(auth *Auth, model string, now time.Time) (bool, block
 	if auth.Disabled || auth.Status == StatusDisabled {
 		return true, blockReasonDisabled, time.Time{}
 	}
+	if _, blocked := codexQuotaReserveState(auth, now); blocked {
+		return true, blockReasonOther, time.Time{}
+	}
 	if hasUnauthorizedAuthFailure(auth) {
 		return true, blockReasonOther, time.Time{}
 	}
@@ -966,10 +969,21 @@ func (s *SessionAffinitySelector) Trees() *cliproxysession.InMemorySessionTreeSt
 // available is reused even when a higher-priority credential recovers. Credential priority
 // applies to cold bindings, requests without a session, and genuine bound-credential
 // failover, so the fallback selector only ever receives the highest available priority tier.
+// The exception is subscription-first with ReturnToPreferredTier, which rebinds a session as
+// soon as a strictly better subscription tier is available again.
 //
 // Note: The cache key includes provider, session ID, and model to handle cases where
 // a session uses multiple models (e.g., gemini-2.5-pro and gemini-3-flash-preview)
 // that may be supported by different auth credentials, and to avoid cross-provider conflicts.
+// preferredAffinityPick returns a permitted tier or weekly-reset improvement for a bound session.
+func (s *SessionAffinitySelector) preferredAffinityPick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, bound *Auth, auths []*Auth) *Auth {
+	subscription, ok := s.fallback.(*SubscriptionFirstSelector)
+	if !ok {
+		return nil
+	}
+	return subscription.preferredAffinityPick(ctx, provider, model, opts, bound, auths)
+}
+
 func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model string, opts cliproxyexecutor.Options, auths []*Auth) (*Auth, error) {
 	entry := selectorLogEntry(ctx)
 	if opts.Metadata == nil {
@@ -1019,7 +1033,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		availabilityCandidates = positiveWeightAuths(auths)
 	}
 	if primaryID == "" {
-		fallbackAuths, errAvailable := getSelectorAvailableAuths(ctx, availabilityCandidates, provider, model, now)
+		fallbackAuths, errAvailable := getSelectorAvailableAuthsWithPriorityMode(ctx, availabilityCandidates, provider, model, now, selectorUsesSubscriptionFirst(s.fallback))
 		if errAvailable != nil {
 			return nil, errAvailable
 		}
@@ -1028,12 +1042,15 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	}
 
 	// A single availability pass serves both lookups: the bound credential is validated against
-	// every priority tier, while the fallback selector keeps seeing only the highest tier.
+	// every priority tier. Subscription-first also ranks across tiers for cold/failover picks.
 	available, err := getSelectorAvailableAuthsAcrossPriorities(ctx, availabilityCandidates, provider, model, now)
 	if err != nil {
 		return nil, err
 	}
 	fallbackAuths := highestPriorityAuths(available)
+	if selectorUsesSubscriptionFirst(s.fallback) {
+		fallbackAuths = available
+	}
 
 	modelKey := canonicalModelKey(model)
 	cacheKey := provider + "::" + primaryID + "::" + modelKey
@@ -1059,6 +1076,11 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	if cachedAuthID, ok := s.cache.GetAndRefresh(cacheKey); ok {
 		for _, auth := range available {
 			if auth.ID == cachedAuthID {
+				if preferred := s.preferredAffinityPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
+					bind(preferred.ID)
+					entry.Infof("session-affinity: moved to preferred account | session=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, preferred.ID, provider, model)
+					return preferred, nil
+				}
 				bind(auth.ID)
 				entry.Infof("session-affinity: cache hit | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 				return auth, nil
@@ -1082,6 +1104,11 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 			for _, auth := range available {
 				if auth.ID == cachedAuthID {
 					if !isSubagent || s.subagentAffinity {
+						if preferred := s.preferredAffinityPick(ctx, provider, model, opts, auth, fallbackAuths); preferred != nil {
+							bind(preferred.ID)
+							entry.Infof("session-affinity: moved to preferred account | session=%s fallback=%s from=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, preferred.ID, provider, model)
+							return preferred, nil
+						}
 						bind(auth.ID)
 						if isFork {
 							entry.Infof("session-affinity: fork cache hit | session=%s parent=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), truncateSessionID(fallbackID), auth.ID, provider, model)
@@ -1143,10 +1170,16 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 		return nil, true, errAvailable
 	}
 
+	var preferred *Auth
 	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
 		for _, auth := range available {
 			if auth == nil || auth.ID != match.AuthID {
 				continue
+			}
+			if preferred = s.preferredAffinityPick(ctx, provider, model, opts, auth, available); preferred != nil {
+				// Rebind below through the fresh-binding path so the prefix records the preferred credential.
+				entry.Infof("session-affinity: LCP moving to preferred account | session=%s from=%s provider=%s model=%s", truncateSessionID(match.SessionID), auth.ID, provider, model)
+				break
 			}
 			if match.SessionID != "" {
 				opts.Metadata[cliproxyexecutor.LCPAffinitySessionIDMetadataKey] = match.SessionID
@@ -1187,9 +1220,16 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	}
 
 	fallbackAuths := highestPriorityAuths(available)
-	auth, errPick := s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
-	if errPick != nil {
-		return nil, true, errPick
+	if selectorUsesSubscriptionFirst(s.fallback) {
+		fallbackAuths = available
+	}
+	auth := preferred
+	if auth == nil {
+		var errPick error
+		auth, errPick = s.fallback.Pick(ctx, provider, model, opts, fallbackAuths)
+		if errPick != nil {
+			return nil, true, errPick
+		}
 	}
 	if auth == nil {
 		return nil, true, &Error{Code: "auth_not_found", Message: "selector returned no auth"}

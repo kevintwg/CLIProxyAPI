@@ -284,3 +284,77 @@ func TestCodexModelLevelCoolingPreservesSiblingModel(t *testing.T) {
 		})
 	}
 }
+
+// This proof uses the real manager, affinity cache, and Codex SSE executor with a loopback upstream.
+func TestCodexSessionSwitchesToEarlierWeeklyReset(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("weekly_preference_%t", enabled), func(t *testing.T) {
+			const model = "gpt-5.4"
+			attempts := make(chan string, 8)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				attempts <- strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+				w.Header().Set("Content-Type", "text/event-stream")
+				if _, errWrite := fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"weekly-response\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"); errWrite != nil {
+					t.Errorf("write SSE: %v", errWrite)
+				}
+			}))
+			defer upstream.Close()
+			affinity := cliproxyauth.NewSessionAffinitySelector(&cliproxyauth.SubscriptionFirstSelector{PreferWeeklyReset: &enabled})
+			defer affinity.Stop()
+			manager := cliproxyauth.NewManager(nil, affinity, nil)
+			manager.RegisterExecutor(runtimeexecutor.NewCodexExecutor(&config.Config{}))
+			now := time.Now()
+			accounts := []*cliproxyauth.Auth{
+				{ID: "weekly-bound", Provider: "codex", Status: cliproxyauth.StatusActive, Attributes: map[string]string{"base_url": upstream.URL}, Metadata: map[string]any{"access_token": "synthetic-bound", "routing_tier": 1, "routing_weekly_reset_at": now.Add(2 * time.Hour).Format(time.RFC3339)}},
+				{ID: "weekly-early", Provider: "codex", Status: cliproxyauth.StatusActive, Disabled: true, Attributes: map[string]string{"base_url": upstream.URL}, Metadata: map[string]any{"access_token": "synthetic-early", "routing_tier": 1, "routing_weekly_reset_at": now.Add(time.Hour).Format(time.RFC3339)}},
+			}
+			for _, a := range accounts {
+				registry.GetGlobalRegistry().RegisterClient(a.ID, "codex", []*registry.ModelInfo{{ID: model}})
+				t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(a.ID) })
+				if _, err := manager.Register(context.Background(), a); err != nil {
+					t.Fatal(err)
+				}
+			}
+			run := func(want string) {
+				t.Helper()
+				result, err := manager.ExecuteStream(context.Background(), []string{"codex"}, cliproxyexecutor.Request{Model: model, Payload: []byte(`{"model":"gpt-5.4","input":"hello"}`)}, cliproxyexecutor.Options{Stream: true, SourceFormat: sdktranslator.FromString("openai-response"), Headers: http.Header{"Session_id": []string{"weekly-proof-session"}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				var payload []byte
+				for chunk := range result.Chunks {
+					if chunk.Err != nil {
+						t.Fatal(chunk.Err)
+					}
+					payload = append(payload, chunk.Payload...)
+				}
+				if !strings.Contains(string(payload), "response.completed") {
+					t.Fatalf("missing completion: %s", payload)
+				}
+				select {
+				case got := <-attempts:
+					if got != want {
+						t.Fatalf("upstream account=%s want=%s", got, want)
+					}
+					t.Logf("upstream account=%s", got)
+				default:
+					t.Fatal("missing upstream request")
+				}
+				if len(attempts) != 0 {
+					t.Fatalf("unexpected retry count=%d", len(attempts))
+				}
+			}
+			run("synthetic-bound")
+			accounts[1].Disabled = false
+			if _, err := manager.Update(context.Background(), accounts[1]); err != nil {
+				t.Fatal(err)
+			}
+			want := "synthetic-bound"
+			if enabled {
+				want = "synthetic-early"
+			}
+			run(want)
+			run(want)
+		})
+	}
+}

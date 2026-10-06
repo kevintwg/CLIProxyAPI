@@ -291,6 +291,18 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errNormalize.Error()})
 		return
 	}
+	// Validate all ranking overrides before any field can reach persistence.
+	for field, raw := range req {
+		value, errDecode := decodeAuthFileFieldValue(raw)
+		if errDecode != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid field value"})
+			return
+		}
+		if errValidate := coreauth.ValidateRoutingField(field, value, time.Now()); errValidate != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errValidate.Error()})
+			return
+		}
+	}
 	requestRetryPatch, errRequestRetry := decodeAuthFileRequestRetryPatch(req)
 	if errRequestRetry != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": errRequestRetry.Error()})

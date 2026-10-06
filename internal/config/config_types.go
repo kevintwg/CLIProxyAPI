@@ -350,8 +350,16 @@ type QuotaExceeded struct {
 
 // RoutingConfig configures how credentials are selected for requests.
 type RoutingConfig struct {
+	// SubscriptionFirstMaxObservationAge limits passive weekly reset freshness. Default: 30m.
+	SubscriptionFirstMaxObservationAge string `yaml:"subscription-first-max-observation-age,omitempty" json:"subscription-first-max-observation-age,omitempty"`
+	// SubscriptionFirstPreferWeeklyReset ranks earliest weekly resets within a tier. Default: true.
+	SubscriptionFirstPreferWeeklyReset *bool `yaml:"subscription-first-prefer-weekly-reset,omitempty" json:"subscription-first-prefer-weekly-reset,omitempty"`
+	// SubscriptionFirstReturnToPreferredTier moves a session-affinity binding back to a strictly
+	// better subscription tier as soon as one is available again. Default: false.
+	SubscriptionFirstReturnToPreferredTier bool `yaml:"subscription-first-return-to-preferred-tier,omitempty" json:"subscription-first-return-to-preferred-tier,omitempty"`
+
 	// Strategy selects the credential selection strategy.
-	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first".
+	// Supported values: "round-robin" (default), "weighted-round-robin", "fill-first", "subscription-first".
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
 
 	// SessionAffinity enables universal session-sticky routing for all clients.

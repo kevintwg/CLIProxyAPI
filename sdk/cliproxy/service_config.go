@@ -25,17 +25,22 @@ type configCommit struct {
 }
 
 type routingRuntimeState struct {
-	strategy                 string
-	sessionAffinity          bool
-	sessionAffinityTTL       time.Duration
-	sessionAffinitySubagents bool
+	strategy                        string
+	sessionAffinity                 bool
+	sessionAffinityTTL              time.Duration
+	sessionAffinitySubagents        bool
+	subscriptionFirstObservationAge time.Duration
+	subscriptionFirstPreferReset    bool
+	subscriptionFirstReturnToTier   bool
 }
 
 func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	state := routingRuntimeState{
-		strategy:                 "round-robin",
-		sessionAffinityTTL:       time.Hour,
-		sessionAffinitySubagents: true,
+		strategy:                        "round-robin",
+		subscriptionFirstObservationAge: 30 * time.Minute,
+		subscriptionFirstPreferReset:    true,
+		sessionAffinityTTL:              time.Hour,
+		sessionAffinitySubagents:        true,
 	}
 	if cfg == nil {
 		return state
@@ -44,9 +49,14 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 	switch strings.ToLower(strings.TrimSpace(cfg.Routing.Strategy)) {
 	case "weighted-round-robin", "weightedroundrobin", "wrr":
 		state.strategy = "weighted-round-robin"
+	case "subscription-first":
+		state.strategy = "subscription-first"
 	case "fill-first", "fillfirst", "ff":
 		state.strategy = "fill-first"
 	}
+	state.subscriptionFirstObservationAge = cfg.Routing.SubscriptionFirstObservationAge()
+	state.subscriptionFirstPreferReset = cfg.Routing.SubscriptionFirstWeeklyResetEnabled()
+	state.subscriptionFirstReturnToTier = cfg.Routing.SubscriptionFirstReturnToPreferredTier
 	state.sessionAffinity = cfg.Routing.SessionAffinity
 	if ttl := strings.TrimSpace(cfg.Routing.SessionAffinityTTL); ttl != "" {
 		if parsed, errParse := time.ParseDuration(ttl); errParse == nil && parsed > 0 {
@@ -65,6 +75,8 @@ func normalizedRoutingRuntimeState(cfg *config.Config) routingRuntimeState {
 func newRoutingSelector(state routingRuntimeState) coreauth.Selector {
 	var selector coreauth.Selector
 	switch state.strategy {
+	case "subscription-first":
+		selector = &coreauth.SubscriptionFirstSelector{MaxObservationAge: state.subscriptionFirstObservationAge, PreferWeeklyReset: &state.subscriptionFirstPreferReset, ReturnToPreferredTier: state.subscriptionFirstReturnToTier}
 	case "weighted-round-robin":
 		selector = &coreauth.WeightedRoundRobinSelector{}
 	case "fill-first":
@@ -107,6 +119,9 @@ func (s *Service) commitConfigUpdate(newCfg *config.Config) configCommit {
 		s.cfgMu.RUnlock()
 	}
 	if newCfg == nil {
+		return configCommit{}
+	}
+	if errValidate := newCfg.Routing.Validate(); errValidate != nil {
 		return configCommit{}
 	}
 	if errValidate := newCfg.ValidateCredentialWeights(); errValidate != nil {
