@@ -419,8 +419,8 @@ func TestCodexGenericRateLimitFailsOverWithSubscriptionOrdering(t *testing.T) {
 		t.Fatal("unexpected retries")
 	}
 	limited, _ := manager.GetByID("limited-plus")
-	if remaining := time.Until(limited.Quota.NextRecoverAt); limited.Quota.Reason != "credential_quota" || remaining < 29*time.Minute || remaining > 30*time.Minute {
+	if remaining := time.Until(limited.Quota.NextRecoverAt); limited.Quota.Reason != "credential_quota" || remaining < 55*time.Second || remaining > time.Minute {
 		t.Fatalf("quarantine not enforced: %+v", limited.Quota)
 	}
-	t.Log("Simulated upstream HTTP 429: Plus -> Pro; next model -> Pro; affected credential cooling for 30 minutes")
+	t.Log("Simulated upstream HTTP 429: Plus -> Pro; next model -> Pro; affected credential cooling for 1 minute")
 }

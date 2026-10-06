@@ -46,11 +46,11 @@ func TestManager_MarkResult_CodexRateLimitWithoutHintQuarantinesCredential(t *te
 		t.Fatalf("expected credential quarantine, got unavailable=%v quota=%+v", updated.Unavailable, updated.Quota)
 	}
 	remaining := time.Until(updated.NextRetryAfter)
-	if remaining < 29*time.Minute || remaining > 30*time.Minute+time.Second {
-		t.Fatalf("credential cooldown = %v, want about 30m", remaining)
+	if remaining < 55*time.Second || remaining > time.Minute+time.Second {
+		t.Fatalf("credential cooldown = %v, want about 1m", remaining)
 	}
 	other := existingModelState(updated, canonicalModelKey("gpt-6-astra"))
-	if other == nil || other.NextRetryAfter.Before(before.Add(29*time.Minute)) {
+	if other == nil || other.NextRetryAfter.Before(before.Add(55*time.Second)) {
 		t.Fatalf("sibling model was not quarantined: %+v", other)
 	}
 }
@@ -122,15 +122,15 @@ func TestManager_MarkResult_CodexRateLimitMarkerWithoutMessageQuarantinesCredent
 		t.Fatalf("marker-only rate limit was not quarantined: unavailable=%v quota=%+v", updated.Unavailable, updated.Quota)
 	}
 	remaining := time.Until(updated.NextRetryAfter)
-	if remaining < 29*time.Minute || remaining > 30*time.Minute+time.Second {
-		t.Fatalf("marker-only cooldown = %v, want about 30m", remaining)
+	if remaining < 55*time.Second || remaining > time.Minute+time.Second {
+		t.Fatalf("marker-only cooldown = %v, want about 1m", remaining)
 	}
 }
 
 func TestCodexRepeatedRateLimitUpdatesWarmSiblingScheduler(t *testing.T) {
 	withQuotaCooldownEnabled(t)
 	manager := NewManager(nil, &RoundRobinSelector{}, nil)
-	oldDeadline := time.Now().Add(10 * time.Minute)
+	oldDeadline := time.Now().Add(10 * time.Second)
 	candidate := &Auth{ID: "repeated-codex-rate-limit", Provider: "codex", Unavailable: true,
 		NextRetryAfter: oldDeadline, Quota: QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: oldDeadline}}
 	models := []string{"repeated-rate-limit-a", "repeated-rate-limit-b"}
@@ -153,7 +153,7 @@ func TestCodexRepeatedRateLimitUpdatesWarmSiblingScheduler(t *testing.T) {
 		if !entry.nextRetryAt.Equal(current.Quota.NextRecoverAt) {
 			t.Fatalf("%s stale scheduler deadline: %s, want %s", model, entry.nextRetryAt, current.Quota.NextRecoverAt)
 		}
-		if blocked, _, _ := isAuthBlockedForModel(entry.auth, model, oldDeadline.Add(time.Minute)); !blocked {
+		if blocked, _, _ := isAuthBlockedForModel(entry.auth, model, oldDeadline.Add(20*time.Second)); !blocked {
 			t.Fatalf("%s became eligible before renewed quarantine expires", model)
 		}
 	}
