@@ -358,3 +358,69 @@ func TestCodexSessionSwitchesToEarlierWeeklyReset(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexGenericRateLimitFailsOverWithSubscriptionOrdering(t *testing.T) {
+	const primary, sibling = "gpt-5.4", "gpt-5.4-mini"
+	attempts := make(chan string, 10)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		attempts <- key
+		if key == "limited-plus" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"detail":"Rate limit exceeded"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"test-success\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+	}))
+	defer server.Close()
+	manager := cliproxyauth.NewManager(nil, &cliproxyauth.SubscriptionFirstSelector{}, nil)
+	manager.SetRetryConfig(0, 0, 0)
+	manager.RegisterExecutor(runtimeexecutor.NewCodexExecutor(&config.Config{}))
+	for i, key := range []string{"limited-plus", "healthy-pro"} {
+		registry.GetGlobalRegistry().RegisterClient(key, "codex", []*registry.ModelInfo{{ID: primary}, {ID: sibling}})
+		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(key) })
+		if _, err := manager.Register(context.Background(), &cliproxyauth.Auth{ID: key, Provider: "codex", Status: cliproxyauth.StatusActive,
+			Attributes: map[string]string{"base_url": server.URL, "api_key": key},
+			Metadata:   map[string]any{"routing_tier": i + 1, "disable_cooling": false}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, model := range []string{primary, sibling} {
+		result, err := manager.ExecuteStream(context.Background(), []string{"codex"}, cliproxyexecutor.Request{
+			Model: model, Payload: []byte(fmt.Sprintf(`{"model":%q,"input":"hello"}`, model)),
+		}, cliproxyexecutor.Options{Stream: true, SourceFormat: sdktranslator.FromString("openai-response")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output []byte
+		for chunk := range result.Chunks {
+			if chunk.Err != nil {
+				t.Fatal(chunk.Err)
+			}
+			output = append(output, chunk.Payload...)
+		}
+		if !strings.Contains(string(output), "response.completed") {
+			t.Fatalf("incomplete response: %s", output)
+		}
+	}
+	for _, want := range []string{"limited-plus", "healthy-pro", "healthy-pro"} {
+		select {
+		case got := <-attempts:
+			if got != want {
+				t.Fatalf("account=%s want=%s", got, want)
+			}
+		default:
+			t.Fatalf("missing attempt for %s", want)
+		}
+	}
+	if len(attempts) != 0 {
+		t.Fatal("unexpected retries")
+	}
+	limited, _ := manager.GetByID("limited-plus")
+	if remaining := time.Until(limited.Quota.NextRecoverAt); limited.Quota.Reason != "credential_quota" || remaining < 29*time.Minute || remaining > 30*time.Minute {
+		t.Fatalf("quarantine not enforced: %+v", limited.Quota)
+	}
+	t.Log("Simulated upstream HTTP 429: Plus -> Pro; next model -> Pro; affected credential cooling for 30 minutes")
+}
