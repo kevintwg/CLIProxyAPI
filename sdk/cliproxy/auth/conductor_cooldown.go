@@ -2343,7 +2343,9 @@ func isCodexRateLimitWithoutRetryHint(result Result) bool {
 	if strings.Contains(message, "usage_limit_reached") || strings.Contains(message, "usage limit reached") {
 		return false
 	}
-	return strings.Contains(message, "rate limit exceeded") && !strings.Contains(message, "quota")
+	return (strings.Contains(message, "rate limit exceeded") ||
+		strings.Contains(message, "rate_limit_error") ||
+		strings.Contains(message, "rate_limit_exceeded")) && !strings.Contains(message, "quota")
 }
 
 // nextQuotaCooldown returns the next cooldown duration and updated backoff level for repeated quota errors.

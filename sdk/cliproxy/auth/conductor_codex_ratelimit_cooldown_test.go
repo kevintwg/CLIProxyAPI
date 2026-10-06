@@ -89,3 +89,39 @@ func TestManager_MarkResult_CodexUsageLimitMessageKeepsQuotaBackoff(t *testing.T
 		t.Fatalf("usage-limit payload was misclassified as generic credential rate limit: %+v", updated.Quota)
 	}
 }
+
+func TestManager_MarkResult_CodexRateLimitMarkerWithoutMessageQuarantinesCredential(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	manager := NewManager(nil, nil, nil)
+	auth := &Auth{ID: "codex-rate-limit-marker", Provider: "codex"}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{
+		{ID: "gpt-6.1-sol", Created: time.Now().Unix()},
+	})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-6.1-sol",
+		Success:  false,
+		Error: &Error{
+			HTTPStatus: http.StatusTooManyRequests,
+			Message:    `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`,
+		},
+	})
+
+	updated, _ := manager.GetByID(auth.ID)
+	if !updated.Unavailable || updated.Quota.Reason != "credential_quota" {
+		t.Fatalf("marker-only rate limit was not quarantined: unavailable=%v quota=%+v", updated.Unavailable, updated.Quota)
+	}
+	remaining := time.Until(updated.NextRetryAfter)
+	if remaining < 29*time.Minute || remaining > 30*time.Minute+time.Second {
+		t.Fatalf("marker-only cooldown = %v, want about 30m", remaining)
+	}
+}
