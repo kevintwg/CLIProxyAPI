@@ -2340,6 +2340,9 @@ func isCodexRateLimitWithoutRetryHint(result Result) bool {
 		return false
 	}
 	message := strings.ToLower(strings.TrimSpace(result.Error.Message))
+	if strings.Contains(message, "usage_limit_reached") || strings.Contains(message, "usage limit reached") {
+		return false
+	}
 	return strings.Contains(message, "rate limit exceeded") && !strings.Contains(message, "quota")
 }
 

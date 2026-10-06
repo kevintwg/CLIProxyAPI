@@ -53,3 +53,39 @@ func TestManager_MarkResult_CodexRateLimitWithoutHintQuarantinesCredential(t *te
 		t.Fatalf("sibling model was not quarantined: %+v", other)
 	}
 }
+
+func TestManager_MarkResult_CodexUsageLimitMessageKeepsQuotaBackoff(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	manager := NewManager(nil, nil, nil)
+	auth := &Auth{ID: "codex-usage-limit-message", Provider: "codex"}
+	registry.GetGlobalRegistry().RegisterClient(auth.ID, auth.Provider, []*registry.ModelInfo{
+		{ID: "gpt-6.1-sol", Created: time.Now().Unix()},
+	})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(auth.ID) })
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatalf("register auth: %v", err)
+	}
+
+	manager.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    "gpt-6.1-sol",
+		Success:  false,
+		Error: &Error{
+			HTTPStatus: http.StatusTooManyRequests,
+			Message:    `{"error":{"type":"usage_limit_reached","message":"Rate limit exceeded"}}`,
+		},
+	})
+
+	updated, _ := manager.GetByID(auth.ID)
+	state := existingModelState(updated, canonicalModelKey("gpt-6.1-sol"))
+	if state == nil || state.Quota.Reason != "quota" || state.Quota.BackoffLevel != 1 {
+		t.Fatalf("usage-limit payload changed quota backoff: auth=%+v state=%+v", updated.Quota, state)
+	}
+	if updated.Quota.Reason == "credential_quota" {
+		t.Fatalf("usage-limit payload was misclassified as generic credential rate limit: %+v", updated.Quota)
+	}
+}
