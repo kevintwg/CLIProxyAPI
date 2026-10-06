@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
 )
 
 func TestManager_MarkResult_CodexRateLimitWithoutHintQuarantinesCredential(t *testing.T) {
@@ -123,5 +124,37 @@ func TestManager_MarkResult_CodexRateLimitMarkerWithoutMessageQuarantinesCredent
 	remaining := time.Until(updated.NextRetryAfter)
 	if remaining < 29*time.Minute || remaining > 30*time.Minute+time.Second {
 		t.Fatalf("marker-only cooldown = %v, want about 30m", remaining)
+	}
+}
+
+func TestCodexRepeatedRateLimitUpdatesWarmSiblingScheduler(t *testing.T) {
+	withQuotaCooldownEnabled(t)
+	manager := NewManager(nil, &RoundRobinSelector{}, nil)
+	oldDeadline := time.Now().Add(10 * time.Minute)
+	candidate := &Auth{ID: "repeated-codex-rate-limit", Provider: "codex", Unavailable: true,
+		NextRetryAfter: oldDeadline, Quota: QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: oldDeadline}}
+	models := []string{"repeated-rate-limit-a", "repeated-rate-limit-b"}
+	registry.GetGlobalRegistry().RegisterClient(candidate.ID, candidate.Provider, []*registry.ModelInfo{{ID: models[0]}, {ID: models[1]}})
+	t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(candidate.ID) })
+	if _, err := manager.Register(context.Background(), candidate); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range models {
+		if _, err := manager.scheduler.pickSingle(context.Background(), "codex", model, cliproxyexecutor.Options{}, nil); err == nil {
+			t.Fatal("precondition: credential should already be cooling")
+		}
+	}
+	manager.MarkResult(context.Background(), Result{AuthID: candidate.ID, Provider: "codex", Model: models[0], Error: &Error{HTTPStatus: 429, Message: `{"error":{"type":"rate_limit_error","code":"rate_limit_exceeded"}}`}})
+	current, _ := manager.GetByID(candidate.ID)
+	manager.scheduler.mu.Lock()
+	defer manager.scheduler.mu.Unlock()
+	for _, model := range models {
+		entry := manager.scheduler.providers["codex"].modelShards[model].entries[candidate.ID]
+		if !entry.nextRetryAt.Equal(current.Quota.NextRecoverAt) {
+			t.Fatalf("%s stale scheduler deadline: %s, want %s", model, entry.nextRetryAt, current.Quota.NextRecoverAt)
+		}
+		if blocked, _, _ := isAuthBlockedForModel(entry.auth, model, oldDeadline.Add(time.Minute)); !blocked {
+			t.Fatalf("%s became eligible before renewed quarantine expires", model)
+		}
 	}
 }

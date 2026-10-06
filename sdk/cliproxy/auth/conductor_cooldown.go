@@ -755,6 +755,9 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		}
 	}
+	if !result.Success && isCodexRateLimitWithoutRetryHint(result) {
+		result.CredentialScope = true
+	}
 	modelKey := canonicalModelKey(result.Model)
 
 	var authSnapshot *Auth
@@ -873,8 +876,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 							var next time.Time
 							var credentialNext time.Time
 							backoffLevel := state.Quota.BackoffLevel
-							credentialScoped429 := result.CredentialScope || isCodexRateLimitWithoutRetryHint(result)
-							if credentialScoped429 {
+							if result.CredentialScope {
 								backoffLevel = 0
 								if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
 									backoffLevel = auth.Quota.BackoffLevel
@@ -892,7 +894,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 									backoffLevel = 0
 								} else {
 									quotaForFailure := state.Quota
-									if credentialScoped429 {
+									if result.CredentialScope {
 										if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
 											quotaForFailure = auth.Quota
 										} else {
@@ -914,7 +916,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 								NextRecoverAt: next,
 								BackoffLevel:  backoffLevel,
 							})
-							if credentialScoped429 && !disableCooling {
+							if result.CredentialScope && !disableCooling {
 								for _, otherState := range auth.ModelStates {
 									if otherState != nil && otherState != state {
 										otherState.Unavailable = true
