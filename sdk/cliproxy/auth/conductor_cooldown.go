@@ -873,7 +873,8 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 							var next time.Time
 							var credentialNext time.Time
 							backoffLevel := state.Quota.BackoffLevel
-							if result.CredentialScope {
+							credentialScoped429 := result.CredentialScope || isCodexRateLimitWithoutRetryHint(result)
+							if credentialScoped429 {
 								backoffLevel = 0
 								if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
 									backoffLevel = auth.Quota.BackoffLevel
@@ -886,9 +887,12 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 										cooldown = minQuotaCooldownFloor
 									}
 									next = now.Add(cooldown).Round(0)
+								} else if isCodexRateLimitWithoutRetryHint(result) {
+									next = now.Add(codexRateLimitCooldown).Round(0)
+									backoffLevel = 0
 								} else {
 									quotaForFailure := state.Quota
-									if result.CredentialScope {
+									if credentialScoped429 {
 										if auth.Quota.Exceeded && auth.Quota.Reason == "credential_quota" {
 											quotaForFailure = auth.Quota
 										} else {
@@ -910,7 +914,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 								NextRecoverAt: next,
 								BackoffLevel:  backoffLevel,
 							})
-							if result.CredentialScope && !disableCooling {
+							if credentialScoped429 && !disableCooling {
 								for _, otherState := range auth.ModelStates {
 									if otherState != nil && otherState != state {
 										otherState.Unavailable = true
@@ -2325,6 +2329,18 @@ func quotaCooldownAfterFailure(quota QuotaState, now time.Time) (time.Time, int)
 		next = now.Add(cooldown).Round(0)
 	}
 	return next, nextLevel
+}
+
+// isCodexRateLimitWithoutRetryHint identifies a Codex 429 that did not include
+// a provider reset time. Treating it as credential-scoped keeps the account out
+// of rotation long enough for a transient request-rate limit to recover.
+func isCodexRateLimitWithoutRetryHint(result Result) bool {
+	if result.Error == nil || !strings.EqualFold(strings.TrimSpace(result.Provider), "codex") ||
+		statusCodeFromResult(result.Error) != http.StatusTooManyRequests || result.RetryAfter != nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(result.Error.Message))
+	return strings.Contains(message, "rate limit exceeded") && !strings.Contains(message, "quota")
 }
 
 // nextQuotaCooldown returns the next cooldown duration and updated backoff level for repeated quota errors.
