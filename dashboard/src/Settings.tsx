@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ArrowDownWideNarrow,
   Check,
@@ -46,15 +46,19 @@ export function Settings({
   api,
   strategy,
   credentials = emptyCredentials,
+  remembered = false,
   onRefresh,
   onDisconnect,
+  onPasswordChanged = () => {},
   notify,
 }: {
   api: ManagementApi;
   strategy: RoutingStrategy;
   credentials?: Credential[];
+  remembered?: boolean;
   onRefresh: () => Promise<void>;
   onDisconnect: () => void;
+  onPasswordChanged?: (newKey: string) => void;
   notify: (text: string) => void;
 }) {
   const [base, setBase] = useState<RoutingSettings | null>(null);
@@ -405,8 +409,9 @@ export function Settings({
             <div>
               <strong>Management key</strong>
               <p>
-                Held in memory for this tab. Reloading or disconnecting clears
-                it.
+                {remembered
+                  ? "Saved on this device. Disconnecting removes it."
+                  : "Held in memory for this tab. Reloading or disconnecting clears it."}
               </p>
             </div>
             <KeyRound size={19} />
@@ -419,6 +424,11 @@ export function Settings({
             </button>
           </div>
         </section>
+        <ChangePassword
+          api={api}
+          onChanged={onPasswordChanged}
+          notify={notify}
+        />
       </div>
       {groups
         .filter((group) => group.id !== "other" || group.accounts.length > 0)
@@ -524,5 +534,140 @@ export function Settings({
           </div>
         ))}
     </div>
+  );
+}
+
+const minPasswordLength = 8;
+// bcrypt only uses the first 72 bytes of a password.
+const maxPasswordBytes = 72;
+
+function passwordProblem(
+  current: string,
+  next: string,
+  confirm: string,
+): string {
+  if (!next.trim()) return "New password cannot be blank.";
+  if ([...next].length < minPasswordLength)
+    return `New password must be at least ${minPasswordLength} characters.`;
+  if (new TextEncoder().encode(next).length > maxPasswordBytes)
+    return "New password is too long. Use 72 characters or fewer.";
+  if (next === current)
+    return "New password must be different from the current password.";
+  if (next !== confirm) return "The new passwords do not match.";
+  return "";
+}
+
+function ChangePassword({
+  api,
+  onChanged,
+  notify,
+}: {
+  api: ManagementApi;
+  onChanged: (newKey: string) => void;
+  notify: (text: string) => void;
+}) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const problem = passwordProblem(current, next, confirm);
+    setError(problem);
+    if (problem) return;
+    setBusy(true);
+    try {
+      await api.changePassword(current, next);
+      onChanged(next);
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      notify("Password changed");
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not change the password.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  function field(
+    id: string,
+    label: string,
+    value: string,
+    set: (value: string) => void,
+    autoComplete: "current-password" | "new-password",
+  ) {
+    return (
+      <label htmlFor={id}>
+        {label}
+        <input
+          id={id}
+          type="password"
+          value={value}
+          autoComplete={autoComplete}
+          disabled={busy}
+          onChange={(event) => set(event.target.value)}
+          required
+        />
+      </label>
+    );
+  }
+  return (
+    <section className="panel settings-panel">
+      <SectionHeading
+        title="Change password"
+        subtitle="Update the management key you use to sign in to Relay."
+      />
+      <form onSubmit={(event) => void submit(event)} noValidate>
+        <div className="routing-options">
+          <div className="routing-fields">
+            {field(
+              "current-password",
+              "Current password",
+              current,
+              setCurrent,
+              "current-password",
+            )}
+            {field(
+              "new-password",
+              "New password",
+              next,
+              setNext,
+              "new-password",
+            )}
+            {field(
+              "confirm-password",
+              "Confirm new password",
+              confirm,
+              setConfirm,
+              "new-password",
+            )}
+          </div>
+          <p>
+            You will stay signed in here. Tools set up with their own management
+            password keep working.
+          </p>
+          {error && (
+            <div role="alert" className="inline-error">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="settings-footer">
+          <span>Use at least 8 characters.</span>
+          <button
+            type="submit"
+            className="button primary"
+            disabled={busy || !current || !next || !confirm}
+          >
+            {busy ? "Changing…" : "Change password"}
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }

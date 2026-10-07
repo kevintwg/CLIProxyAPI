@@ -46,21 +46,23 @@ type Handler struct {
 	reloadGeneration        uint64
 	appliedReloadGeneration uint64
 	attemptsMu              sync.Mutex
-	failedAttempts          map[string]*attemptInfo // keyed by client IP
-	authManager             *coreauth.Manager
-	tokenStore              coreauth.Store
-	localPassword           string
-	allowRemoteOverride     bool
-	envSecret               string
-	logDir                  string
-	postAuthHook            coreauth.PostAuthHook
-	postAuthPersistHook     coreauth.PostAuthHook
-	pluginHost              *pluginhost.Host
-	configReloadHook        func(context.Context, *config.Config)
-	pluginStoreRegistryURL  string
-	pluginStoreHTTPClient   pluginstore.HTTPDoer
-	pluginStoreRateLimiter  *pluginstore.GitHubRateLimiter
-	pluginReleases          pluginReleaseCache
+	// secretMu guards in-place writes of cfg.RemoteManagement.SecretKey against auth reads.
+	secretMu               sync.RWMutex
+	failedAttempts         map[string]*attemptInfo // keyed by client IP
+	authManager            *coreauth.Manager
+	tokenStore             coreauth.Store
+	localPassword          string
+	allowRemoteOverride    bool
+	envSecret              string
+	logDir                 string
+	postAuthHook           coreauth.PostAuthHook
+	postAuthPersistHook    coreauth.PostAuthHook
+	pluginHost             *pluginhost.Host
+	configReloadHook       func(context.Context, *config.Config)
+	pluginStoreRegistryURL string
+	pluginStoreHTTPClient  pluginstore.HTTPDoer
+	pluginStoreRateLimiter *pluginstore.GitHubRateLimiter
+	pluginReleases         pluginReleaseCache
 }
 
 type configReloadSnapshot struct {
@@ -306,15 +308,16 @@ func (h *Handler) AuthenticateManagementKey(clientIP string, localClient bool, p
 		return false, http.StatusForbidden, "remote management disabled"
 	}
 
-	cfg := h.cfg
 	var (
 		allowRemote bool
 		secretHash  string
 	)
-	if cfg != nil {
+	h.secretMu.RLock()
+	if cfg := h.cfg; cfg != nil {
 		allowRemote = cfg.RemoteManagement.AllowRemote
 		secretHash = cfg.RemoteManagement.SecretKey
 	}
+	h.secretMu.RUnlock()
 	if h.allowRemoteOverride {
 		allowRemote = true
 	}

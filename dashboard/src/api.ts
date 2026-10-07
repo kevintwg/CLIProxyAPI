@@ -234,9 +234,17 @@ class HttpError extends Error {
     readonly status: number,
     readonly missingConfigPath: boolean,
     message: string,
+    readonly detail?: string,
   ) {
     super(message);
   }
+}
+
+/** True when the server refused the management key itself. */
+export function isKeyRejected(error: unknown): boolean {
+  return (
+    error instanceof HttpError && (error.status === 401 || error.status === 403)
+  );
 }
 
 export class ManagementApi {
@@ -317,6 +325,9 @@ export class ManagementApi {
         this.redact(
           `${explanation} (${response.status})${message ? `: ${message}` : "."}`,
         ),
+        typeof detail?.error === "string"
+          ? this.redact(detail.error)
+          : undefined,
       );
     }
     if (data === undefined)
@@ -457,6 +468,24 @@ export class ManagementApi {
       throw new Error(
         "Unexpected management response: mutation was not confirmed.",
       );
+  }
+
+  async changePassword(current: string, next: string): Promise<void> {
+    try {
+      await this.mutate("/password", "PUT", {
+        current_password: current,
+        new_password: next,
+      });
+    } catch (error) {
+      // These statuses carry a plain explanation meant for the person signing in.
+      if (
+        error instanceof HttpError &&
+        error.detail &&
+        [400, 403, 409].includes(error.status)
+      )
+        throw new Error(error.detail);
+      throw error;
+    }
   }
 
   async setRouting(value: RoutingStrategy): Promise<void> {
