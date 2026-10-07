@@ -122,6 +122,8 @@ func applyCodexRoutingProfile(profile *RoutingProfile, a *Auth, now time.Time, m
 	}
 	if observationFresh(observation.BankedResetObservedAt, now, maxAge) {
 		profile.BankedResetObservedAt = observation.BankedResetObservedAt.UTC().Format(time.RFC3339Nano)
+		count := observation.BankedResetCount
+		profile.BankedResetCount = &count
 		if observation.BankedResetExpiresAt.After(now) {
 			profile.BankedResetExpiresAt = observation.BankedResetExpiresAt.UTC().Format(time.RFC3339Nano)
 		}

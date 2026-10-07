@@ -11,6 +11,7 @@ server's existing remote management, disabled-panel and Home-mode policies.
 - Provider sign-in, status polling, cancellation and manual callback submission.
 - Pause, resume and remove signed-in accounts. Removal deletes the saved connection; reconnecting requires signing in again.
 - Searchable model library from connected, unpaused accounts.
+- Usage page with manual provider fetches, live allowance meters and banked reset redemption with confirmation.
 - Persisted routing preferences and copyable client connection details.
 - Optional remembered sign-in and dashboard password changes.
 - Desktop, mobile, light, dark and reduced-motion interfaces.

@@ -23,6 +23,7 @@ type CodexRoutingObservation struct {
 	Secondary             *CodexRoutingWindow
 	BankedResetObservedAt time.Time
 	BankedResetExpiresAt  time.Time
+	BankedResetCount      int
 }
 
 // Clone returns a snapshot with independent windows.
@@ -174,6 +175,7 @@ func (m *Manager) UpdateCodexRoutingObservation(base *Auth, observation *CodexRo
 	if !observation.BankedResetObservedAt.IsZero() && observation.BankedResetObservedAt.After(merged.BankedResetObservedAt) {
 		merged.BankedResetObservedAt = observation.BankedResetObservedAt
 		merged.BankedResetExpiresAt = observation.BankedResetExpiresAt
+		merged.BankedResetCount = observation.BankedResetCount
 		changed = true
 	}
 	if !changed {

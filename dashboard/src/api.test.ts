@@ -444,6 +444,65 @@ describe("Codex routing observations", () => {
   });
 });
 
+describe("usage controls", () => {
+  it("fetches a Codex usage snapshot for the selected account", async () => {
+    respond({
+      observed_at: "2030-01-01T00:00:00Z",
+      plan: "pro",
+      banked_reset_count: 2,
+      primary: {
+        used_percent: 25,
+        remaining_percent: 75,
+        window_minutes: 300,
+        resets_at: "2030-01-01T05:00:00Z",
+        observed_at: "2030-01-01T00:00:00Z",
+      },
+    });
+    await expect(api.fetchUsage(account)).resolves.toMatchObject({
+      plan: "pro",
+      banked_reset_count: 2,
+      primary: { used_percent: 25 },
+    });
+    expect(call().options).toMatchObject({
+      method: "POST",
+      body: JSON.stringify({
+        auth_index: account.auth_index,
+        provider: account.provider,
+      }),
+    });
+    expect(call().url).toBe("/v8/management/credentials/usage/fetch");
+  });
+
+  it("accepts the plugin quota response casing for plans and groups", async () => {
+    respond({
+      subscription: { plan: "Pro", tierName: "Team" },
+      groups: [
+        {
+          displayName: "Daily quota",
+          buckets: [{ window: "day", remainingFraction: 0.75 }],
+        },
+      ],
+    });
+    await expect(api.fetchUsage(account)).resolves.toMatchObject({
+      subscription: { plan: "Pro", tierName: "Team" },
+      groups: [
+        {
+          display_name: "Daily quota",
+          buckets: [{ remaining_fraction: 0.75 }],
+        },
+      ],
+    });
+  });
+
+  it("requires confirmation at the UI layer before sending a reset redemption", async () => {
+    respond({ status: "ok", usage: { banked_reset_count: 1 } });
+    await expect(api.redeemReset(account)).resolves.toMatchObject({
+      banked_reset_count: 1,
+    });
+    expect(call().url).toBe("/v8/management/credentials/usage/redeem");
+  });
+});
+
 it("deletes only the encoded credential name", async () => {
   respond({ status: "ok" });
   await api.removeCredential(account);

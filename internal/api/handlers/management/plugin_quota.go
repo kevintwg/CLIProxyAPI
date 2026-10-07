@@ -74,6 +74,10 @@ func (h *Handler) FetchCredentialQuota(c *gin.Context) {
 		return
 	}
 
+	h.fetchCredentialQuota(c, auth, body)
+}
+
+func (h *Handler) fetchCredentialQuota(c *gin.Context, auth *coreauth.Auth, body credentialQuotaRequest) {
 	h.mu.Lock()
 	host := h.pluginHost
 	h.mu.Unlock()
@@ -150,6 +154,10 @@ func (h *Handler) ResetCredentialQuota(c *gin.Context) {
 		return
 	}
 
+	h.resetCredentialQuota(c, auth, body)
+}
+
+func (h *Handler) resetCredentialQuota(c *gin.Context, auth *coreauth.Auth, body credentialQuotaRequest) {
 	h.mu.Lock()
 	host := h.pluginHost
 	h.mu.Unlock()

@@ -14,6 +14,7 @@ import {
   Command,
   Eye,
   EyeOff,
+  Gauge,
   KeyRound,
   LayoutDashboard,
   Menu,
@@ -24,18 +25,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import {
-  isKeyRejected,
-  ManagementApi,
-  type Credential,
-  type RoutingStrategy,
-} from "./api";
+import { ManagementApi, type Credential, type RoutingStrategy } from "./api";
 import { Accounts } from "./Accounts";
 import { ConnectAccount } from "./ConnectAccount";
 import { Models } from "./Models";
 import { Overview } from "./Overview";
 import { Settings } from "./Settings";
-import { forgetKey, readRememberedKey, rememberKey } from "./session";
+import { Usage } from "./Usage";
 import { Dialog, EmptyState, ExternalDocs, Status } from "./ui";
 
 const pages = {
@@ -53,6 +49,11 @@ const pages = {
     title: "Models",
     description: "Find the right model for whatever comes next.",
     icon: Boxes,
+  },
+  usage: {
+    title: "Usage",
+    description: "See each account's live allowance and reset credits.",
+    icon: Gauge,
   },
   settings: {
     title: "Settings",
@@ -76,9 +77,6 @@ export function App() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [updated, setUpdated] = useState<Date | null>(null);
-  const [remembered, setRemembered] = useState(false);
-  const [restoring, setRestoring] = useState(() => !!readRememberedKey());
-  const [signInError, setSignInError] = useState("");
   const refreshController = useRef<AbortController | null>(null);
   const refreshRevision = useRef(0);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -103,8 +101,6 @@ export function App() {
     setMobileNav(false);
   }
   function disconnect() {
-    forgetKey();
-    setRemembered(false);
     refreshRevision.current++;
     refreshController.current?.abort();
     gatewayRef.current = null;
@@ -115,65 +111,18 @@ export function App() {
     setUpdated(null);
     notify("Disconnected from the gateway");
   }
-  const connect = useCallback(
-    async (key: string, signal: AbortSignal, remember: boolean) => {
-      const trimmed = key.trim();
-      const api = new ManagementApi(trimmed);
-      const [credentials, strategy] = await Promise.all([
-        api.credentials(signal),
-        api.routing(signal),
-      ]);
-      if (signal.aborted) return;
-      if (remember) rememberKey(trimmed);
-      else forgetKey();
-      setRemembered(remember);
-      setGateway({ api, credentials, strategy });
-      setError("");
-      setSignInError("");
-      setDialog(null);
-      setUpdated(new Date());
-      notify("Gateway connected");
-    },
-    [notify],
-  );
-  useEffect(() => {
-    const saved = readRememberedKey();
-    if (!saved) return;
-    const controller = new AbortController();
-    setRestoring(true);
-    connect(saved, controller.signal, true)
-      .catch((reason: unknown) => {
-        if (controller.signal.aborted) return;
-        if (isKeyRejected(reason)) {
-          forgetKey();
-          setSignInError(
-            "Your saved password was not accepted. Sign in again to continue.",
-          );
-        } else {
-          setSignInError(
-            reason instanceof Error
-              ? reason.message
-              : "Could not connect to the gateway.",
-          );
-        }
-        setDialog("gateway");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setRestoring(false);
-      });
-    return () => controller.abort();
-  }, [connect]);
-  function passwordChanged(newKey: string) {
-    const current = gatewayRef.current;
-    if (!current) return;
-    // An in-flight refresh still holds the old key; stop it so it cannot reinstall that key.
-    refreshRevision.current++;
-    refreshController.current?.abort();
-    setLoading(false);
-    const next = { ...current, api: new ManagementApi(newKey) };
-    gatewayRef.current = next;
-    setGateway(next);
-    if (remembered) rememberKey(newKey);
+  async function connect(key: string, signal: AbortSignal) {
+    const api = new ManagementApi(key.trim());
+    const [credentials, strategy] = await Promise.all([
+      api.credentials(signal),
+      api.routing(signal),
+    ]);
+    if (signal.aborted) return;
+    setGateway({ api, credentials, strategy });
+    setError("");
+    setDialog(null);
+    setUpdated(new Date());
+    notify("Gateway connected");
   }
   const refresh = useCallback(async () => {
     const current = gatewayRef.current;
@@ -189,11 +138,7 @@ export function App() {
         current.api.credentials(controller.signal),
         current.api.routing(controller.signal),
       ]);
-      if (
-        controller.signal.aborted ||
-        revision !== refreshRevision.current ||
-        gatewayRef.current?.api !== current.api
-      )
+      if (controller.signal.aborted || revision !== refreshRevision.current)
         return;
       setGateway({ api: current.api, credentials, strategy });
       setUpdated(new Date());
@@ -339,15 +284,10 @@ export function App() {
               )}
               <button
                 className="button primary"
-                disabled={restoring}
                 onClick={() => setDialog(gateway ? "account" : "gateway")}
               >
                 {gateway ? <Plus size={17} /> : <KeyRound size={16} />}
-                {gateway
-                  ? "Connect account"
-                  : restoring
-                    ? "Signing in…"
-                    : "Connect gateway"}
+                {gateway ? "Connect account" : "Connect gateway"}
               </button>
             </div>
           </div>
@@ -417,15 +357,20 @@ export function App() {
               />
             ) : page === "models" ? (
               <Models credentials={gateway.credentials} api={gateway.api} />
+            ) : page === "usage" ? (
+              <Usage
+                credentials={gateway.credentials}
+                api={gateway.api}
+                onRefresh={refresh}
+                notify={notify}
+              />
             ) : (
               <Settings
                 api={gateway.api}
                 strategy={gateway.strategy}
                 credentials={gateway.credentials}
-                remembered={remembered}
                 onRefresh={refresh}
                 onDisconnect={disconnect}
-                onPasswordChanged={passwordChanged}
                 notify={notify}
               />
             )}
@@ -446,14 +391,7 @@ export function App() {
         </main>
       </div>
       {dialog === "gateway" && (
-        <GatewayDialog
-          initialError={signInError}
-          onConnect={connect}
-          onClose={() => {
-            setSignInError("");
-            setDialog(null);
-          }}
-        />
+        <GatewayDialog onConnect={connect} onClose={() => setDialog(null)} />
       )}
       {dialog === "account" && gateway && (
         <ConnectAccount
@@ -488,23 +426,16 @@ export function App() {
 }
 
 function GatewayDialog({
-  initialError = "",
   onConnect,
   onClose,
 }: {
-  initialError?: string;
-  onConnect: (
-    key: string,
-    signal: AbortSignal,
-    remember: boolean,
-  ) => Promise<void>;
+  onConnect: (key: string, signal: AbortSignal) => Promise<void>;
   onClose: () => void;
 }) {
   const [key, setKey] = useState("");
   const [visible, setVisible] = useState(false);
-  const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(initialError);
+  const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
   useEffect(() => () => controller.current?.abort(), []);
   async function submit(event: FormEvent) {
@@ -514,7 +445,7 @@ function GatewayDialog({
     const request = new AbortController();
     controller.current = request;
     try {
-      await onConnect(key, request.signal, remember);
+      await onConnect(key, request.signal);
     } catch (reason) {
       if (!request.signal.aborted)
         setError(
@@ -560,21 +491,11 @@ function GatewayDialog({
             {error}
           </p>
         )}
-        <label className="routing-toggle remember-toggle">
-          <input
-            type="checkbox"
-            checked={remember}
-            disabled={busy}
-            onChange={(event) => setRemember(event.target.checked)}
-          />
-          Remember me on this device
-        </label>
         <div className="key-note">
           <ShieldCheck size={18} />
           <p>
-            {remember
-              ? "Your key is saved in this browser until you disconnect. Only use this on a device you trust."
-              : "Your key stays in this tab's memory and is cleared when you reload or disconnect."}
+            Your key stays in this tab's memory and is cleared when you reload
+            or disconnect.
           </p>
         </div>
         <div className="dialog-actions">

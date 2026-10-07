@@ -2,10 +2,8 @@ package cliproxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,8 +13,8 @@ import (
 )
 
 const (
-	codexUsageURL            = "https://chatgpt.com/backend-api/wham/usage"
-	codexResetCreditsURL     = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+	codexUsageURL            = coreauth.CodexUsageURL
+	codexResetCreditsURL     = coreauth.CodexResetCreditsURL
 	codexObservationInterval = time.Minute
 	codexProbeBodyLimit      = 1 << 20
 	codexObserverWorkers     = 4
@@ -141,15 +139,8 @@ func (o *codexRoutingObserver) fetch(ctx context.Context, auth *coreauth.Auth, u
 		return nil, errors.New("invalid Codex observation URL")
 	}
 	req.Header.Set("Accept", "application/json")
-	for _, key := range []string{"account_id", "chatgpt_account_id"} {
-		accountID, _ := auth.Metadata[key].(string)
-		if strings.TrimSpace(accountID) == "" {
-			accountID = auth.Attributes[key]
-		}
-		if accountID = strings.TrimSpace(accountID); accountID != "" {
-			req.Header.Set("ChatGPT-Account-ID", accountID)
-			break
-		}
+	if accountID := coreauth.CodexAccountID(auth); accountID != "" {
+		req.Header.Set("ChatGPT-Account-ID", accountID)
 	}
 	response, errRequest := o.request(ctx, auth, req)
 	if response != nil && response.Body != nil {
@@ -168,90 +159,10 @@ func (o *codexRoutingObserver) fetch(ctx context.Context, auth *coreauth.Auth, u
 	return data, nil
 }
 
-type codexUsageWindow struct {
-	UsedPercent   *float64 `json:"used_percent"`
-	ResetAt       *int64   `json:"reset_at"`
-	WindowSeconds *int     `json:"limit_window_seconds"`
-}
-
 func parseCodexUsageObservation(data []byte, now time.Time) (*coreauth.CodexRoutingObservation, error) {
-	var payload struct {
-		Plan      string `json:"plan_type"`
-		RateLimit *struct {
-			Primary   *codexUsageWindow `json:"primary_window"`
-			Secondary *codexUsageWindow `json:"secondary_window"`
-		} `json:"rate_limit"`
-	}
-	if json.Unmarshal(data, &payload) != nil || payload.RateLimit == nil {
-		return nil, errors.New("invalid Codex usage")
-	}
-	primary, errPrimary := parseCodexUsageWindow(payload.RateLimit.Primary, now)
-	secondary, errSecondary := parseCodexUsageWindow(payload.RateLimit.Secondary, now)
-	if errPrimary != nil || errSecondary != nil || (primary == nil && secondary == nil) {
-		return nil, errors.New("invalid Codex usage windows")
-	}
-	return &coreauth.CodexRoutingObservation{ObservedAt: now, Plan: strings.ToLower(strings.TrimSpace(payload.Plan)), Primary: primary, Secondary: secondary}, nil
-}
-
-func parseCodexUsageWindow(window *codexUsageWindow, now time.Time) (*coreauth.CodexRoutingWindow, error) {
-	if window == nil {
-		return nil, nil
-	}
-	if window.UsedPercent == nil || window.ResetAt == nil || window.WindowSeconds == nil ||
-		math.IsNaN(*window.UsedPercent) || math.IsInf(*window.UsedPercent, 0) || *window.UsedPercent < 0 || *window.UsedPercent > 100 ||
-		*window.WindowSeconds < 60 || *window.WindowSeconds%60 != 0 {
-		return nil, errors.New("invalid Codex usage window")
-	}
-	reset := time.Unix(*window.ResetAt, 0)
-	if !reset.After(now) {
-		return nil, errors.New("expired Codex usage window")
-	}
-	return &coreauth.CodexRoutingWindow{ObservedAt: now, UsedPercent: *window.UsedPercent, ResetsAt: reset, WindowMinutes: *window.WindowSeconds / 60}, nil
+	return coreauth.ParseCodexUsageObservation(data, now)
 }
 
 func parseCodexResetCreditObservation(data []byte, now time.Time) (*coreauth.CodexRoutingObservation, error) {
-	var payload struct {
-		Credits json.RawMessage `json:"credits"`
-	}
-	if json.Unmarshal(data, &payload) != nil || len(payload.Credits) == 0 || string(payload.Credits) == "null" {
-		return nil, errors.New("invalid Codex reset credits")
-	}
-	var credits []struct {
-		Status    string          `json:"status"`
-		Supported *bool           `json:"is_supported_by_plan"`
-		ExpiresAt json.RawMessage `json:"expires_at"`
-	}
-	if json.Unmarshal(payload.Credits, &credits) != nil {
-		return nil, errors.New("invalid Codex reset credits")
-	}
-	observation := &coreauth.CodexRoutingObservation{BankedResetObservedAt: now}
-	for _, credit := range credits {
-		if strings.TrimSpace(credit.Status) == "" {
-			return nil, errors.New("invalid Codex reset credit status")
-		}
-		if credit.Status != "available" || (credit.Supported != nil && !*credit.Supported) {
-			continue
-		}
-		if len(credit.ExpiresAt) == 0 {
-			return nil, errors.New("missing Codex reset credit expiry")
-		}
-		if string(credit.ExpiresAt) == "null" {
-			continue
-		}
-		var expiryText string
-		if json.Unmarshal(credit.ExpiresAt, &expiryText) != nil {
-			return nil, errors.New("invalid Codex reset credit expiry")
-		}
-		expiry, errExpiry := time.Parse(time.RFC3339, expiryText)
-		if errExpiry != nil {
-			return nil, errors.New("invalid Codex reset credit expiry")
-		}
-		if !expiry.After(now) {
-			continue
-		}
-		if observation.BankedResetExpiresAt.IsZero() || expiry.Before(observation.BankedResetExpiresAt) {
-			observation.BankedResetExpiresAt = expiry
-		}
-	}
-	return observation, nil
+	return coreauth.ParseCodexResetCreditObservation(data, now)
 }

@@ -120,8 +120,23 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 	host := h.pluginHost
 	h.mu.Unlock()
 	var quotaSupportedProviders map[string]struct{}
+	var quotaResetSupportedProviders map[string]struct{}
 	if host != nil {
 		quotaSupportedProviders = host.QuotaSupportedProvidersSet(c.Request.Context())
+		quotaResetSupportedProviders = make(map[string]struct{})
+		for _, provider := range host.QuotaProviders(c.Request.Context()) {
+			if !provider.SupportsReset {
+				continue
+			}
+			if key := strings.ToLower(strings.TrimSpace(provider.Provider)); key != "" {
+				quotaResetSupportedProviders[key] = struct{}{}
+			}
+			for _, supported := range provider.SupportedProviders {
+				if key := strings.ToLower(strings.TrimSpace(supported)); key != "" {
+					quotaResetSupportedProviders[key] = struct{}{}
+				}
+			}
+		}
 	}
 	auths := h.authManager.List()
 	observedAt := time.Now().UTC()
@@ -141,7 +156,7 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		start, end := pagination.bounds(total)
 		files := make([]gin.H, 0, end-start)
 		for _, auth := range matching[start:end] {
-			if entry := h.buildAuthFileEntry(auth, quotaSupportedProviders); entry != nil {
+			if entry := h.buildAuthFileEntry(auth, quotaSupportedProviders, quotaResetSupportedProviders); entry != nil {
 				entry["cooldowns"] = nil
 				if cooldownsKnown {
 					entry["cooldowns"] = coreauth.CooldownSnapshotForAuth(auth, observedAt)
@@ -157,7 +172,7 @@ func (h *Handler) ListAuthFiles(c *gin.Context) {
 		if !matchesAuthFileLookup(auth, nameFilter, authIndexFilter) {
 			continue
 		}
-		if entry := h.buildAuthFileEntry(auth, quotaSupportedProviders); entry != nil {
+		if entry := h.buildAuthFileEntry(auth, quotaSupportedProviders, quotaResetSupportedProviders); entry != nil {
 			entry["cooldowns"] = nil
 			if cooldownsKnown {
 				entry["cooldowns"] = coreauth.CooldownSnapshotForAuth(auth, observedAt)
@@ -679,6 +694,9 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 	h.mu.Unlock()
 	routingProfile := coreauth.SubscriptionRoutingProfile(auth, time.Now(), maxObservationAge)
 	entry["routing_profile"] = routingProfile
+	if auth.CodexRouting != nil {
+		entry["usage_limits"] = codexUsageResponse(auth.CodexRouting)
+	}
 	if tier, ok := coreauth.ManualRoutingTier(auth); ok {
 		entry["routing_tier"] = tier
 	}
@@ -715,6 +733,16 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 			entry["supports_quota"] = true
 			entry["quota_probe"] = probe
 		}
+	}
+	var quotaResetSupportedMap map[string]struct{}
+	if len(quotaSupported) > 1 {
+		quotaResetSupportedMap = quotaSupported[1]
+	}
+	if _, ok := quotaResetSupportedMap[strings.ToLower(strings.TrimSpace(auth.Provider))]; ok {
+		entry["supports_reset"] = true
+	}
+	if strings.EqualFold(auth.Provider, "codex") && auth.AuthKind() == coreauth.AuthKindOAuth {
+		entry["supports_reset"] = true
 	}
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email

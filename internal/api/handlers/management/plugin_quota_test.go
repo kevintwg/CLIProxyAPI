@@ -371,6 +371,9 @@ func TestAuthFilesList_IncludesQuotaSupport(t *testing.T) {
 			if qp, ok := f["quota_provider"].(string); !ok || qp != "opencode-go" {
 				t.Fatalf("expected quota_provider: opencode-go, got %#v", f["quota_provider"])
 			}
+			if supports, ok := f["supports_reset"].(bool); !ok || !supports {
+				t.Fatalf("expected opencode auth to have supports_reset: true, got %#v", f["supports_reset"])
+			}
 		case "custom-auth-list":
 			foundProbe = true
 			if supports, ok := f["supports_quota"].(bool); !ok || !supports {
@@ -383,6 +386,9 @@ func TestAuthFilesList_IncludesQuotaSupport(t *testing.T) {
 			foundNormal = true
 			if supports, ok := f["supports_quota"].(bool); ok && supports {
 				t.Fatalf("expected normal auth to have supports_quota: false, got true")
+			}
+			if supports, ok := f["supports_reset"].(bool); ok && supports {
+				t.Fatalf("expected normal auth to have supports_reset: false, got true")
 			}
 		}
 	}

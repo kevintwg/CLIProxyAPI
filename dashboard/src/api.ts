@@ -25,6 +25,10 @@ export interface Credential {
   routing_tier?: number;
   routing_weekly_reset_at?: string;
   plan_type?: string;
+  supports_quota?: boolean;
+  supports_reset?: boolean;
+  quota_provider?: string;
+  usage_limits?: UsageSnapshot;
   routing_profile?: {
     tier?: number;
     tier_source: "manual" | "plan" | "unknown";
@@ -34,9 +38,52 @@ export interface Credential {
     observed_at?: string;
     banked_reset_expires_at?: string;
     banked_reset_observed_at?: string;
+    banked_reset_count?: number;
     quota_reserve_percent?: number;
     quota_reserve_blocked?: boolean;
   };
+}
+
+export interface UsageWindow {
+  used_percent: number;
+  remaining_percent: number;
+  window_minutes: number;
+  resets_at: string;
+  observed_at: string;
+}
+
+export interface UsageBucket {
+  window?: string;
+  remaining_fraction: number;
+  reset_time?: string;
+  description?: string;
+}
+
+export interface UsageGroup {
+  display_name?: string;
+  buckets: UsageBucket[];
+}
+
+export interface UsageMetric {
+  key: string;
+  label: string;
+  value: number;
+  unit?: string;
+  format?: "number" | "currency";
+  currency?: string;
+}
+
+export interface UsageSnapshot {
+  observed_at?: string;
+  plan?: string;
+  primary?: UsageWindow;
+  secondary?: UsageWindow;
+  banked_reset_count?: number;
+  banked_reset_expires_at?: string;
+  banked_reset_observed_at?: string;
+  subscription?: { plan?: string; tierName?: string; tierId?: string };
+  summary?: UsageMetric[];
+  groups?: UsageGroup[];
 }
 
 export interface Model {
@@ -116,6 +163,8 @@ function credential(value: unknown): Credential {
   );
   optionalFields(item, result, ["success", "failed"], "number");
   optionalFields(item, result, ["runtime_only"], "boolean");
+  optionalFields(item, result, ["supports_quota", "supports_reset"], "boolean");
+  optionalFields(item, result, ["quota_provider"], "string");
   optionalFields(
     item,
     result,
@@ -152,7 +201,7 @@ function credential(value: unknown): Credential {
     optionalFields(
       profile,
       parsed,
-      ["tier", "quota_reserve_percent"],
+      ["tier", "quota_reserve_percent", "banked_reset_count"],
       "number",
     );
     optionalFields(
@@ -182,7 +231,147 @@ function credential(value: unknown): Credential {
     ])
       if (date !== undefined && !Number.isFinite(Date.parse(date)))
         throw new Error("Unexpected routing profile date.");
+    if (
+      parsed.banked_reset_count !== undefined &&
+      (!Number.isInteger(parsed.banked_reset_count) ||
+        parsed.banked_reset_count < 0)
+    )
+      throw new Error("Unexpected banked reset count.");
     result.routing_profile = parsed;
+  }
+  if (item.usage_limits !== undefined)
+    result.usage_limits = usageSnapshot(item.usage_limits);
+  return result;
+}
+
+function finite(value: unknown, message: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value))
+    throw new Error(`Unexpected management response: invalid ${message}.`);
+  return value;
+}
+
+function date(value: unknown, message: string): string {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)))
+    throw new Error(`Unexpected management response: invalid ${message}.`);
+  return value;
+}
+
+function optionalDate(
+  item: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  if (item[key] === undefined || item[key] === null) return undefined;
+  return date(item[key], key);
+}
+
+function usageWindow(value: unknown): UsageWindow {
+  const item = object(value);
+  return {
+    used_percent: finite(item.used_percent, "used_percent"),
+    remaining_percent: finite(item.remaining_percent, "remaining_percent"),
+    window_minutes: finite(item.window_minutes, "window_minutes"),
+    resets_at: date(item.resets_at, "resets_at"),
+    observed_at: date(item.observed_at, "observed_at"),
+  };
+}
+
+function usageSnapshot(value: unknown): UsageSnapshot {
+  const item = object(value);
+  const result: UsageSnapshot = {};
+  if (item.observed_at !== undefined)
+    result.observed_at = date(item.observed_at, "observed_at");
+  if (item.plan !== undefined) result.plan = string(item.plan);
+  if (item.primary !== undefined && item.primary !== null)
+    result.primary = usageWindow(item.primary);
+  if (item.secondary !== undefined && item.secondary !== null)
+    result.secondary = usageWindow(item.secondary);
+  if (item.banked_reset_count !== undefined) {
+    const count = finite(item.banked_reset_count, "banked_reset_count");
+    if (!Number.isInteger(count) || count < 0)
+      throw new Error(
+        "Unexpected management response: invalid banked_reset_count.",
+      );
+    result.banked_reset_count = count;
+  }
+  result.banked_reset_expires_at = optionalDate(
+    item,
+    "banked_reset_expires_at",
+  );
+  result.banked_reset_observed_at = optionalDate(
+    item,
+    "banked_reset_observed_at",
+  );
+  if (item.subscription !== undefined && item.subscription !== null) {
+    const subscription = object(item.subscription);
+    result.subscription = {};
+    if (subscription.plan !== undefined)
+      result.subscription.plan = string(subscription.plan);
+    if (subscription.tierName !== undefined)
+      result.subscription.tierName = string(subscription.tierName);
+    if (subscription.tierId !== undefined)
+      result.subscription.tierId = string(subscription.tierId);
+  }
+  if (item.summary !== undefined) {
+    if (!Array.isArray(item.summary))
+      throw new Error("Unexpected management response: invalid summary.");
+    result.summary = item.summary.map((value) => {
+      const metric = object(value);
+      const format = metric.format;
+      if (format !== undefined && format !== "number" && format !== "currency")
+        throw new Error(
+          "Unexpected management response: invalid metric format.",
+        );
+      return {
+        key: string(metric.key),
+        label: string(metric.label),
+        value: finite(metric.value, "metric value"),
+        ...(metric.unit === undefined ? {} : { unit: string(metric.unit) }),
+        ...(format === undefined ? {} : { format }),
+        ...(metric.currency === undefined
+          ? {}
+          : { currency: string(metric.currency) }),
+      };
+    });
+  }
+  if (item.groups !== undefined) {
+    if (!Array.isArray(item.groups))
+      throw new Error("Unexpected management response: invalid groups.");
+    result.groups = item.groups.map((value) => {
+      const group = object(value);
+      if (!Array.isArray(group.buckets))
+        throw new Error("Unexpected management response: invalid buckets.");
+      return {
+        ...(group.display_name === undefined && group.displayName === undefined
+          ? {}
+          : {
+              display_name: string(group.display_name ?? group.displayName),
+            }),
+        buckets: group.buckets.map((bucketValue) => {
+          const bucket = object(bucketValue);
+          return {
+            ...(bucket.window === undefined
+              ? {}
+              : { window: string(bucket.window) }),
+            remaining_fraction: finite(
+              bucket.remaining_fraction ?? bucket.remainingFraction,
+              "remaining_fraction",
+            ),
+            ...(bucket.reset_time === undefined &&
+            bucket.resetTime === undefined
+              ? {}
+              : {
+                  reset_time: date(
+                    bucket.reset_time ?? bucket.resetTime,
+                    "reset_time",
+                  ),
+                }),
+            ...(bucket.description === undefined
+              ? {}
+              : { description: string(bucket.description) }),
+          };
+        }),
+      };
+    });
   }
   return result;
 }
@@ -508,6 +697,29 @@ export class ManagementApi {
       `/credentials?name=${encodeURIComponent(value.name)}`,
       "DELETE",
     );
+  }
+
+  async fetchUsage(value: Credential): Promise<UsageSnapshot> {
+    return usageSnapshot(
+      await this.request("/credentials/usage/fetch", "POST", {
+        auth_index: value.auth_index,
+        provider: value.quota_provider ?? value.provider,
+      }),
+    );
+  }
+
+  async redeemReset(value: Credential): Promise<UsageSnapshot | undefined> {
+    const data = object(
+      await this.request("/credentials/usage/redeem", "POST", {
+        auth_index: value.auth_index,
+        provider: value.quota_provider ?? value.provider,
+      }),
+    );
+    if (data.status !== "ok")
+      throw new Error(
+        "Unexpected management response: reset was not confirmed.",
+      );
+    return data.usage === undefined ? undefined : usageSnapshot(data.usage);
   }
 
   async startLogin(
