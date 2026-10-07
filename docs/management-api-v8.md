@@ -85,6 +85,7 @@ retain the corresponding business operation's fields.
 
 | Path | Methods | Description |
 | --- | --- | --- |
+| `/password` | PUT | Change the dashboard management password. See below. |
 | `/server/latest-version` | GET | Get latest release information. |
 | `/requests/api-call` | POST | Make an authenticated upstream call. |
 | `/routing/cooldown/reset` | POST | Clear credential cooldown. |
@@ -111,6 +112,22 @@ retain the corresponding business operation's fields.
 | `/plugins/store` | GET | List the plugin store. |
 | `/plugins/store/<id>/install` | POST | Install or update a plugin. |
 | `/plugins/<id>/quota` | GET, POST, DELETE | Read, fetch, or reset plugin quota. |
+
+### Change the dashboard password
+
+`PUT /password` replaces the bcrypt hash stored in `secret-key`. Send
+`{"current_password": "<current>", "new_password": "<new>"}`. The new password
+must not be blank, must have at least 8 characters, must be at most 72 bytes,
+and must differ from the current one. The config file stores only the new
+bcrypt hash. A `MANAGEMENT_PASSWORD` environment secret is not changed and
+keeps working.
+
+| Status | Meaning |
+| --- | --- |
+| 200 | Password changed. Use the new password for later requests. |
+| 400 | The new password does not meet the rules above. |
+| 403 | The current password is incorrect. This does not count toward the failed-login ban. |
+| 409 | No `secret-key` is configured, so there is nothing to change. |
 
 ## OAuth
 

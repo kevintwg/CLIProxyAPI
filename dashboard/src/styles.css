@@ -1216,6 +1216,10 @@ select {
   color: var(--muted);
   margin-right: 0.2rem;
 }
+.dialog label.remember-toggle {
+  display: flex;
+  margin: 1.1rem 0 0;
+}
 .key-note {
   display: flex;
   gap: 0.7rem;

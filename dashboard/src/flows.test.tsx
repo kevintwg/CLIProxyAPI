@@ -55,6 +55,181 @@ it("connects a gateway whose persisted routing uses a supported alias", async ()
   ).toBeChecked();
 });
 
+describe("remembered sign-in and password changes", () => {
+  const storageKey = "relay.managementKey";
+  type Reply = { status?: number; body: unknown };
+  function stubGateway(
+    route: (url: string, init: RequestInit) => Reply | undefined = () =>
+      undefined,
+  ) {
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const reply = route(url, init) ?? {
+        body: url.endsWith("/credentials")
+          ? { files: [account] }
+          : url.endsWith("/config/routing")
+            ? { strategy: "round-robin" }
+            : "round-robin",
+      };
+      return new Response(JSON.stringify(reply.body), {
+        status: reply.status ?? 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+  function bearer(init: RequestInit): string {
+    return (init.headers as Record<string, string>).Authorization;
+  }
+  afterEach(() => window.localStorage.clear());
+
+  it("remembers the key, signs in on reload, and forgets it on disconnect", async () => {
+    const fetchMock = stubGateway();
+    const first = render(<App />);
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Connect gateway" })[0],
+    );
+    await userEvent.type(
+      screen.getByLabelText("Management key", { exact: true }),
+      "saved-key",
+    );
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Remember me on this device" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await screen.findByText("Gateway connected", { selector: "strong" });
+    expect(window.localStorage.getItem(storageKey)).toBe("saved-key");
+    first.unmount();
+
+    fetchMock.mockClear();
+    render(<App />);
+    expect(
+      await screen.findByText("Gateway connected", { selector: "strong" }),
+    ).toBeInTheDocument();
+    expect(bearer(fetchMock.mock.calls[0]![1])).toBe("Bearer saved-key");
+
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(await screen.findByText(/Saved on this device/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(window.localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      screen.getByText("Gateway locked", { selector: "strong" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps an unremembered key out of storage", async () => {
+    stubGateway();
+    render(<App />);
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Connect gateway" })[0],
+    );
+    await userEvent.type(
+      screen.getByLabelText("Management key", { exact: true }),
+      "memory-key",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await screen.findByText("Gateway connected", { selector: "strong" });
+    expect(window.localStorage.getItem(storageKey)).toBeNull();
+  });
+
+  it("clears a saved key the server rejects and asks to sign in again", async () => {
+    window.localStorage.setItem(storageKey, "stale-key");
+    stubGateway(() => ({
+      status: 401,
+      body: { error: "invalid management key" },
+    }));
+    render(<App />);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your saved password was not accepted",
+    );
+    expect(window.localStorage.getItem(storageKey)).toBeNull();
+    expect(
+      screen.getByLabelText("Management key", { exact: true }),
+    ).toHaveValue("");
+  });
+
+  async function openPasswordForm() {
+    window.localStorage.setItem(storageKey, "old-password");
+    render(<App />);
+    await screen.findByText("Gateway connected", { selector: "strong" });
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.type(
+      await screen.findByLabelText("Current password"),
+      "old-password",
+    );
+    await userEvent.type(screen.getByLabelText("New password"), "new-password");
+  }
+
+  it("changes the password and keeps the session on the new key", async () => {
+    const fetchMock = stubGateway((url) =>
+      url.endsWith("/password") ? { body: { status: "ok" } } : undefined,
+    );
+    await openPasswordForm();
+    await userEvent.type(
+      screen.getByLabelText("Confirm new password"),
+      "new-passwrd",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("do not match");
+    expect(
+      fetchMock.mock.calls.some(([url]) => url.endsWith("/password")),
+    ).toBe(false);
+
+    await userEvent.clear(screen.getByLabelText("Confirm new password"));
+    await userEvent.type(
+      screen.getByLabelText("Confirm new password"),
+      "new-password",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+    expect(
+      await screen.findByText("Password changed", { selector: "span" }),
+    ).toBeInTheDocument();
+    const change = fetchMock.mock.calls.find(([url]) =>
+      url.endsWith("/password"),
+    )!;
+    expect(change[1]).toMatchObject({ method: "PUT" });
+    expect(JSON.parse(String(change[1].body))).toEqual({
+      current_password: "old-password",
+      new_password: "new-password",
+    });
+    expect(window.localStorage.getItem(storageKey)).toBe("new-password");
+    expect(screen.getByLabelText("Current password")).toHaveValue("");
+
+    fetchMock.mockClear();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh gateway" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(bearer(fetchMock.mock.calls[0]![1])).toBe("Bearer new-password");
+  });
+
+  it("shows the server's reason when the password change is refused", async () => {
+    stubGateway((url) =>
+      url.endsWith("/password")
+        ? { status: 403, body: { error: "Current password is incorrect." } }
+        : undefined,
+    );
+    await openPasswordForm();
+    await userEvent.type(
+      screen.getByLabelText("Confirm new password"),
+      "new-password",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Current password is incorrect.",
+    );
+    expect(window.localStorage.getItem(storageKey)).toBe("old-password");
+    expect(screen.getByLabelText("Current password")).toHaveValue(
+      "old-password",
+    );
+  });
+});
+
 describe("account and routing controls", () => {
   it("shows a rejected pause without claiming the account is paused", async () => {
     const api = new ManagementApi("test-key");

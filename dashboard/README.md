@@ -12,9 +12,21 @@ server's existing remote management, disabled-panel and Home-mode policies.
 - Pause, resume and remove signed-in accounts. Removal deletes the saved connection; reconnecting requires signing in again.
 - Searchable model library from connected, unpaused accounts.
 - Persisted routing preferences and copyable client connection details.
+- Optional remembered sign-in and dashboard password changes.
 - Desktop, mobile, light, dark and reduced-motion interfaces.
 
-The management key stays in browser memory. Reloading or disconnecting clears it.
+By default the management key stays in browser memory, and reloading or
+disconnecting clears it. Check "Remember me on this device" when signing in to
+save the key in this browser's local storage, so Relay signs in automatically on
+the next visit. Disconnecting removes the saved key, and a saved key the server
+no longer accepts is removed and the sign-in form is shown. Only use this on a
+device you trust. If the browser blocks storage, Relay keeps the key in memory.
+
+Settings can change the dashboard password (the `secret-key` management key).
+It needs the current password and a new one of at least 8 characters. The
+config file stores only the new bcrypt hash, this browser stays signed in with
+the new password, and a separate `MANAGEMENT_PASSWORD` environment secret keeps
+working.
 Relay does not install usage history storage or change provider quotas. Requests
 handled are the sum of current account counters, not durable historical analytics.
 Provider authentication still requires an eligible account. API-key providers can

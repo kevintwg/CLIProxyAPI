@@ -452,3 +452,20 @@ it("deletes only the encoded credential name", async () => {
     options: { method: "DELETE", body: undefined },
   });
 });
+
+it("changes the password and returns the server's plain refusal", async () => {
+  respond({ status: "ok" });
+  await api.changePassword("old-password", "new-password");
+  expect(call()).toMatchObject({
+    url: "/v8/management/password",
+    options: { method: "PUT" },
+  });
+  expect(JSON.parse(String(call().options.body))).toEqual({
+    current_password: "old-password",
+    new_password: "new-password",
+  });
+  respond({ error: "Current password is incorrect." }, 403);
+  await expect(
+    api.changePassword("wrong-password", "new-password"),
+  ).rejects.toThrow(/^Current password is incorrect\.$/);
+});
