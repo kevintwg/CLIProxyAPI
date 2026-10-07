@@ -206,6 +206,57 @@ describe("remembered sign-in and password changes", () => {
     expect(bearer(fetchMock.mock.calls[0]![1])).toBe("Bearer new-password");
   });
 
+  it("keeps the new key when an old-key refresh finishes after the change", async () => {
+    let holdOldKey = false;
+    const held: Array<() => void> = [];
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const body = url.endsWith("/password")
+        ? { status: "ok" }
+        : url.endsWith("/credentials")
+          ? { files: [account] }
+          : url.endsWith("/config/routing")
+            ? { strategy: "round-robin" }
+            : "round-robin";
+      if (
+        holdOldKey &&
+        !url.endsWith("/password") &&
+        bearer(init) === "Bearer old-password"
+      )
+        await new Promise<void>((release) => held.push(release));
+      return new Response(JSON.stringify(body));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await openPasswordForm();
+    await userEvent.type(
+      screen.getByLabelText("Confirm new password"),
+      "new-password",
+    );
+
+    holdOldKey = true;
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh gateway" }),
+    );
+    await waitFor(() => expect(held.length).toBeGreaterThan(0));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Change password" }),
+    );
+    await screen.findByText("Password changed", { selector: "span" });
+    held.splice(0).forEach((release) => release());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    holdOldKey = false;
+    fetchMock.mockClear();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Refresh gateway" }),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(
+      fetchMock.mock.calls.every(
+        ([, init]) => bearer(init) === "Bearer new-password",
+      ),
+    ).toBe(true);
+  });
+
   it("shows the server's reason when the password change is refused", async () => {
     stubGateway((url) =>
       url.endsWith("/password")

@@ -129,3 +129,33 @@ func TestChangePasswordRequiresConfiguredHash(t *testing.T) {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestChangePasswordDoesNotRaceWithAuthentication(t *testing.T) {
+	h := newPasswordTestHandler(t)
+	const newPassword = "brand-new-password"
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				// A separate client IP keeps these early failures from banning the final check.
+				h.AuthenticateManagementKey("::1", true, newPassword)
+			}
+		}
+	}()
+
+	rec := putPassword(t, h, testCurrentPassword, newPassword)
+	close(stop)
+	<-done
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	if allowed, status, msg := h.AuthenticateManagementKey("127.0.0.1", true, newPassword); !allowed {
+		t.Fatalf("new password rejected: status=%d msg=%q", status, msg)
+	}
+}

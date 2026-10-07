@@ -54,9 +54,9 @@ func (h *Handler) ChangePassword(c *gin.Context) {
 	}
 
 	previousHash := h.cfg.RemoteManagement.SecretKey
-	h.cfg.RemoteManagement.SecretKey = string(hashed)
+	h.setSecretHash(string(hashed))
 	if !h.persistLocked(c) {
-		h.cfg.RemoteManagement.SecretKey = previousHash
+		h.setSecretHash(previousHash)
 		return
 	}
 	log.Info("management: dashboard password changed")
@@ -77,4 +77,12 @@ func validateNewManagementPassword(current, next string) string {
 		return "New password must be different from the current password."
 	}
 	return ""
+}
+
+// setSecretHash replaces the stored hash so concurrent AuthenticateManagementKey calls never read a partial write.
+// Callers must hold h.mu.
+func (h *Handler) setSecretHash(hash string) {
+	h.secretMu.Lock()
+	h.cfg.RemoteManagement.SecretKey = hash
+	h.secretMu.Unlock()
 }

@@ -166,6 +166,10 @@ export function App() {
   function passwordChanged(newKey: string) {
     const current = gatewayRef.current;
     if (!current) return;
+    // An in-flight refresh still holds the old key; stop it so it cannot reinstall that key.
+    refreshRevision.current++;
+    refreshController.current?.abort();
+    setLoading(false);
     const next = { ...current, api: new ManagementApi(newKey) };
     gatewayRef.current = next;
     setGateway(next);
@@ -185,7 +189,11 @@ export function App() {
         current.api.credentials(controller.signal),
         current.api.routing(controller.signal),
       ]);
-      if (controller.signal.aborted || revision !== refreshRevision.current)
+      if (
+        controller.signal.aborted ||
+        revision !== refreshRevision.current ||
+        gatewayRef.current?.api !== current.api
+      )
         return;
       setGateway({ api: current.api, credentials, strategy });
       setUpdated(new Date());
