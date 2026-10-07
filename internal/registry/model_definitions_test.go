@@ -345,3 +345,30 @@ func TestGetDevinModelsFallback(t *testing.T) {
 		t.Errorf("info.DisplayName = %q, want SWE-2", info.DisplayName)
 	}
 }
+
+func TestGetClaudeModelsIncludesHaikuIDs(t *testing.T) {
+	want := map[string]struct {
+		contextLength int
+		maxTokens     int
+	}{
+		"claude-haiku-5-5":          {contextLength: 1000000, maxTokens: 128000},
+		"claude-haiku-4-5":          {contextLength: 200000, maxTokens: 64000},
+		"claude-haiku-4-5-20251001": {contextLength: 200000, maxTokens: 64000},
+	}
+	for _, model := range GetClaudeModels() {
+		if model == nil {
+			continue
+		}
+		expected, ok := want[model.ID]
+		if !ok {
+			continue
+		}
+		if model.ContextLength != expected.contextLength || model.MaxCompletionTokens != expected.maxTokens {
+			t.Errorf("%s limits = %d/%d, want %d/%d", model.ID, model.ContextLength, model.MaxCompletionTokens, expected.contextLength, expected.maxTokens)
+		}
+		delete(want, model.ID)
+	}
+	for id := range want {
+		t.Errorf("expected Claude model %s in the embedded catalog", id)
+	}
+}
