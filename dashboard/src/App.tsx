@@ -14,6 +14,7 @@ import {
   Command,
   Eye,
   EyeOff,
+  Gauge,
   KeyRound,
   LayoutDashboard,
   Menu,
@@ -35,6 +36,7 @@ import { ConnectAccount } from "./ConnectAccount";
 import { Models } from "./Models";
 import { Overview } from "./Overview";
 import { Settings } from "./Settings";
+import { Usage } from "./Usage";
 import { forgetKey, readRememberedKey, rememberKey } from "./session";
 import { Dialog, EmptyState, ExternalDocs, Status } from "./ui";
 
@@ -53,6 +55,11 @@ const pages = {
     title: "Models",
     description: "Find the right model for whatever comes next.",
     icon: Boxes,
+  },
+  usage: {
+    title: "Usage",
+    description: "See each account's live allowance and reset credits.",
+    icon: Gauge,
   },
   settings: {
     title: "Settings",
@@ -417,6 +424,13 @@ export function App() {
               />
             ) : page === "models" ? (
               <Models credentials={gateway.credentials} api={gateway.api} />
+            ) : page === "usage" ? (
+              <Usage
+                credentials={gateway.credentials}
+                api={gateway.api}
+                onRefresh={refresh}
+                notify={notify}
+              />
             ) : (
               <Settings
                 api={gateway.api}

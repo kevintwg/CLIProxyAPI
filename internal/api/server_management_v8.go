@@ -48,6 +48,8 @@ func (s *Server) registerManagementV8Routes() {
 	v8.GET("/credentials/download", s.mgmt.DownloadAuthFile)
 	v8.PATCH("/credentials/status", s.mgmt.PatchAuthFileStatus)
 	v8.PATCH("/credentials/fields", s.mgmt.PatchAuthFileFields)
+	v8.POST("/credentials/usage/fetch", s.mgmt.FetchCredentialUsage)
+	v8.POST("/credentials/usage/redeem", s.mgmt.RedeemCredentialReset)
 	v8.POST("/credentials/refresh", s.mgmt.RefreshAuthFiles)
 	v8.POST("/oauth/import", s.mgmt.ImportOAuthV8)
 	v8.GET("/oauth/auth-url", s.mgmt.StartOAuthV8)

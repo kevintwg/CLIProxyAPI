@@ -7,6 +7,7 @@ import { ConnectAccount } from "./ConnectAccount";
 import { Models } from "./Models";
 import { parseRouting } from "./routing";
 import { Settings } from "./Settings";
+import { Usage } from "./Usage";
 import { ManagementApi, type Credential } from "./api";
 
 const account: Credential = {
@@ -1080,6 +1081,107 @@ it("does not offer removal for a live-session account without saved credentials"
   await userEvent.click(button);
   expect(remove).not.toHaveBeenCalled();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+it("shows usage meters and confirms reset redemption before calling the API", async () => {
+  const api = new ManagementApi("test-key");
+  const fetchUsage = vi.spyOn(api, "fetchUsage").mockResolvedValue({
+    plan: "pro",
+    banked_reset_count: 1,
+    primary: {
+      used_percent: 40,
+      remaining_percent: 60,
+      window_minutes: 300,
+      resets_at: "2030-01-01T05:00:00Z",
+      observed_at: "2030-01-01T00:00:00Z",
+    },
+  });
+  const redeemReset = vi.spyOn(api, "redeemReset").mockResolvedValue({
+    banked_reset_count: 0,
+  });
+  const notify = vi.fn();
+  render(
+    <Usage
+      api={api}
+      credentials={[
+        {
+          ...account,
+          provider: "codex",
+          supports_reset: true,
+          usage_limits: {
+            plan: "pro",
+            banked_reset_count: 1,
+            primary: {
+              used_percent: 40,
+              remaining_percent: 60,
+              window_minutes: 300,
+              resets_at: "2030-01-01T05:00:00Z",
+              observed_at: "2030-01-01T00:00:00Z",
+            },
+          },
+        },
+      ]}
+      onRefresh={vi.fn().mockResolvedValue(undefined)}
+      notify={notify}
+    />,
+  );
+  expect(screen.getByText("40% used")).toBeInTheDocument();
+  expect(screen.getByText("1 available")).toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Fetch usage for Test account" }),
+  );
+  await waitFor(() =>
+    expect(fetchUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "codex" }),
+    ),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Redeem reset" }));
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "Redeem a banked reset?",
+  );
+  expect(redeemReset).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Redeem reset" }));
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Redeem reset",
+    }),
+  );
+  await waitFor(() => expect(redeemReset).toHaveBeenCalled());
+  expect(notify).toHaveBeenCalledWith("Reset redeemed for Test account");
+});
+
+it("keeps a completed redemption successful when the inventory refresh fails", async () => {
+  const api = new ManagementApi("test-key");
+  vi.spyOn(api, "redeemReset").mockResolvedValue({ banked_reset_count: 0 });
+  const notify = vi.fn();
+  render(
+    <Usage
+      api={api}
+      credentials={[
+        {
+          ...account,
+          provider: "codex",
+          supports_reset: true,
+          usage_limits: { banked_reset_count: 1 },
+        },
+      ]}
+      onRefresh={vi.fn().mockRejectedValue(new Error("gateway unavailable"))}
+      notify={notify}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Redeem reset" }));
+  await userEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "Redeem reset",
+    }),
+  );
+  await waitFor(() =>
+    expect(notify).toHaveBeenCalledWith("Reset redeemed for Test account"),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("could not be refreshed");
 });
 
 it("rechecks runtime-only status when the account inventory changes during confirmation", async () => {

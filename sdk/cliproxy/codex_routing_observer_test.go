@@ -32,7 +32,7 @@ func TestParseCodexResetCreditObservation(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	data := `{"credits":[{"status":"available","expires_at":"2030-01-03T00:00:00Z"},{"status":"available","is_supported_by_plan":false,"expires_at":"2030-01-01T00:01:00Z"},{"status":"consumed","expires_at":"2030-01-01T00:02:00Z"},{"status":"available","expires_at":null},{"status":"available","expires_at":"2029-01-01T00:00:00Z"},{"status":"available","is_supported_by_plan":true,"expires_at":"2030-01-02T00:00:00Z"}]}`
 	observation, err := parseCodexResetCreditObservation([]byte(data), now)
-	if err != nil || !observation.BankedResetExpiresAt.Equal(now.Add(24*time.Hour)) {
+	if err != nil || !observation.BankedResetExpiresAt.Equal(now.Add(24*time.Hour)) || observation.BankedResetCount != 2 {
 		t.Fatalf("earliest usable expiry missing: %+v %v", observation, err)
 	}
 	for _, empty := range []string{`{"credits":[]}`, `{"credits":[{"status":"available","expires_at":null}]}`} {

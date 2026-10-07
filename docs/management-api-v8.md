@@ -101,6 +101,8 @@ retain the corresponding business operation's fields.
 | `/credentials/download` | GET | Download a credential file. |
 | `/credentials/status` | PATCH | Change credential status. |
 | `/credentials/fields` | PATCH | Change credential fields. |
+| `/credentials/usage/fetch` | POST | Fetch current usage through a credential quota provider, or Codex usage windows and banked reset credits for an OAuth account. |
+| `/credentials/usage/redeem` | POST | Redeem one available provider reset for a credential when its provider supports reset, and return the refreshed Codex usage snapshot when available. |
 | `/credentials/refresh` | POST | Refresh credentials. |
 | `/oauth/import?provider=vertex` | POST | Import a Vertex service account using a multipart `file` upload. |
 | `/oauth/auth-url?provider=<provider>` | GET | Start built-in or plugin OAuth. |

@@ -24,6 +24,7 @@ type RoutingProfile struct {
 	ObservedAt            string   `json:"observed_at,omitempty"`
 	BankedResetExpiresAt  string   `json:"banked_reset_expires_at,omitempty"`
 	BankedResetObservedAt string   `json:"banked_reset_observed_at,omitempty"`
+	BankedResetCount      *int     `json:"banked_reset_count,omitempty"`
 	QuotaReservePercent   *float64 `json:"quota_reserve_percent,omitempty"`
 	QuotaReserveBlocked   *bool    `json:"quota_reserve_blocked,omitempty"`
 }
