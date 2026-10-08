@@ -228,7 +228,7 @@ export function Usage({
         <div>
           <SectionHeading
             title="Usage limits"
-            subtitle="Fetch a fresh provider reading when you need to see the current allowance."
+            subtitle="Fetch provider readings when you need to see the current allowance. Claude uses its latest request observation."
           />
           {fetchError && (
             <p className="inline-error" role="alert">
@@ -327,15 +327,7 @@ export function Usage({
                       </p>
                     )}
                     {windows.map((window, index) => (
-                      <Meter
-                        key={`${account.id}-${index}`}
-                        label={
-                          index === 1 && account.provider !== "codex"
-                            ? "Secondary limit"
-                            : undefined
-                        }
-                        window={window}
-                      />
+                      <Meter key={`${account.id}-${index}`} window={window} />
                     ))}
                     {groups.map(({ label, bucket }) => (
                       <GenericMeter
@@ -361,7 +353,9 @@ export function Usage({
                     <CircleHelp size={17} />
                     <span>
                       {account.supports_quota === true
-                        ? "No usage reading yet. Fetch this account to load the provider meter."
+                        ? account.provider.toLowerCase() === "claude"
+                          ? "No Claude usage observation yet. Send a Claude request through the relay to populate this meter."
+                          : "No usage reading yet. Fetch this account to load the provider meter."
                         : "This provider does not expose a usage meter."}
                     </span>
                   </div>

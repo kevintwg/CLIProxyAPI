@@ -28,6 +28,14 @@ func (h *Handler) FetchCredentialUsage(c *gin.Context) {
 		return
 	}
 	if !strings.EqualFold(auth.Provider, "codex") || auth.AuthKind() != coreauth.AuthKindOAuth {
+		if strings.EqualFold(auth.Provider, "claude") {
+			if usage, ok := claudeUsageResponse(auth.Quota); ok {
+				c.JSON(http.StatusOK, usage)
+				return
+			}
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "no Claude usage observation available; send a Claude request first"})
+			return
+		}
 		h.fetchCredentialQuota(c, auth, body)
 		return
 	}

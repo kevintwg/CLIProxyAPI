@@ -697,6 +697,11 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 	if auth.CodexRouting != nil {
 		entry["usage_limits"] = codexUsageResponse(auth.CodexRouting)
 	}
+	if strings.EqualFold(auth.Provider, "claude") {
+		if usage, ok := claudeUsageResponse(auth.Quota); ok {
+			entry["usage_limits"] = usage
+		}
+	}
 	if tier, ok := coreauth.ManualRoutingTier(auth); ok {
 		entry["routing_tier"] = tier
 	}
@@ -731,6 +736,12 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 	// Codex OAuth usage is fetched by the built-in management endpoint rather
 	// than a plugin quota provider, so expose the same capability to clients.
 	if strings.EqualFold(auth.Provider, "codex") && auth.AuthKind() == coreauth.AuthKindOAuth {
+		entry["supports_quota"] = true
+		entry["quota_provider"] = auth.Provider
+	}
+	// Claude usage is reported in rate-limit headers on ordinary requests. The
+	// usage endpoint reads that passive observation without consuming quota.
+	if strings.EqualFold(auth.Provider, "claude") {
 		entry["supports_quota"] = true
 		entry["quota_provider"] = auth.Provider
 	}

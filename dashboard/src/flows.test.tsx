@@ -1154,6 +1154,46 @@ it("shows usage meters and confirms reset redemption before calling the API", as
   expect(notify).toHaveBeenCalledWith("Reset redeemed for Test account");
 });
 
+it("renders Claude's observed 5-hour and weekly windows", async () => {
+  const api = new ManagementApi("test-key");
+  const fetchUsage = vi.spyOn(api, "fetchUsage").mockResolvedValue({
+    observed_at: "2030-01-01T00:00:00Z",
+    primary: {
+      used_percent: 23,
+      remaining_percent: 77,
+      window_minutes: 300,
+      resets_at: "2030-01-01T05:00:00Z",
+      observed_at: "2030-01-01T00:00:00Z",
+    },
+    secondary: {
+      used_percent: 69,
+      remaining_percent: 31,
+      window_minutes: 10080,
+      resets_at: "2030-01-08T00:00:00Z",
+      observed_at: "2030-01-01T00:00:00Z",
+    },
+  });
+  render(
+    <Usage
+      api={api}
+      credentials={[{ ...account, supports_quota: true }]}
+      onRefresh={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+
+  expect(
+    screen.getByText(/No Claude usage observation yet/),
+  ).toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Fetch usage for Test account" }),
+  );
+  await waitFor(() => expect(fetchUsage).toHaveBeenCalled());
+  expect(await screen.findByText("23% used")).toBeInTheDocument();
+  expect(screen.getByText("Weekly limit")).toBeInTheDocument();
+  expect(screen.getByText(/Observed/)).toBeInTheDocument();
+});
+
 it("keeps a completed redemption successful when the inventory refresh fails", async () => {
   const api = new ManagementApi("test-key");
   vi.spyOn(api, "redeemReset").mockResolvedValue({ banked_reset_count: 0 });
