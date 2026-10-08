@@ -523,6 +523,11 @@ main {
   gap: 1.15rem;
   padding: 1.2rem 1.4rem;
 }
+.usage-observed {
+  color: var(--muted);
+  font-size: 0.65rem;
+  margin: 0;
+}
 .usage-meter-heading,
 .usage-meter-foot {
   display: flex;
