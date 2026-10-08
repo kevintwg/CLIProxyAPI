@@ -16,18 +16,24 @@ import (
 
 // RoutingProfile contains only safe ranking inputs, never authentication material.
 type RoutingProfile struct {
-	Tier                  *int     `json:"tier,omitempty"`
-	TierSource            string   `json:"tier_source"`
-	Plan                  string   `json:"plan,omitempty"`
-	WeeklyResetAt         string   `json:"weekly_reset_at,omitempty"`
-	ResetSource           string   `json:"reset_source"`
-	ObservedAt            string   `json:"observed_at,omitempty"`
-	BankedResetExpiresAt  string   `json:"banked_reset_expires_at,omitempty"`
-	BankedResetObservedAt string   `json:"banked_reset_observed_at,omitempty"`
-	BankedResetCount      *int     `json:"banked_reset_count,omitempty"`
-	QuotaReservePercent   *float64 `json:"quota_reserve_percent,omitempty"`
-	QuotaReserveBlocked   *bool    `json:"quota_reserve_blocked,omitempty"`
+	Tier                   *int     `json:"tier,omitempty"`
+	TierSource             string   `json:"tier_source"`
+	Plan                   string   `json:"plan,omitempty"`
+	WeeklyRemainingPercent *float64 `json:"weekly_remaining_percent,omitempty"`
+	WeeklyResetAt          string   `json:"weekly_reset_at,omitempty"`
+	ResetSource            string   `json:"reset_source"`
+	ObservedAt             string   `json:"observed_at,omitempty"`
+	BankedResetExpiresAt   string   `json:"banked_reset_expires_at,omitempty"`
+	BankedResetObservedAt  string   `json:"banked_reset_observed_at,omitempty"`
+	BankedResetCount       *int     `json:"banked_reset_count,omitempty"`
+	QuotaReservePercent    *float64 `json:"quota_reserve_percent,omitempty"`
+	QuotaReserveBlocked    *bool    `json:"quota_reserve_blocked,omitempty"`
 }
+
+// SubscriptionWeeklyReserveThresholdPercent keeps an account out of the
+// normal same-tier rotation once its observed weekly capacity falls below this
+// threshold. Tier precedence still wins over the reserve rule.
+const SubscriptionWeeklyReserveThresholdPercent = 30.0
 
 func ManualRoutingTier(a *Auth) (int, bool) {
 	if a == nil {
@@ -121,6 +127,11 @@ func SubscriptionRoutingProfile(a *Auth, now time.Time, maxAge time.Duration) Ro
 	}
 	profile.Plan = detectedRoutingPlan(a, signals, fresh)
 	applyCodexRoutingProfile(&profile, a, now, maxAge)
+	if fresh && strings.EqualFold(strings.TrimSpace(a.Provider), "claude") {
+		if remaining, ok := observedClaudeWeeklyRemaining(signals); ok {
+			profile.WeeklyRemainingPercent = &remaining
+		}
+	}
 	tiers := map[string]int{"free": 0, "go": 1, "plus": 2, "pro": 3}
 	if tier, ok := tiers[profile.Plan]; ok {
 		profile.Tier = &tier
@@ -154,6 +165,30 @@ func SubscriptionRoutingProfile(a *Auth, now time.Time, maxAge time.Duration) Ro
 		profile.ResetSource = "observed"
 	}
 	return profile
+}
+
+func observedClaudeWeeklyRemaining(signals map[string]string) (float64, bool) {
+	raw, ok := signals["anthropic-ratelimit-unified-7d-utilization"]
+	if !ok {
+		return 0, false
+	}
+	utilization, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil || math.IsNaN(utilization) || math.IsInf(utilization, 0) || utilization < 0 {
+		return 0, false
+	}
+	if utilization > 1 {
+		utilization = 1
+	}
+	return (1 - utilization) * 100, true
+}
+
+func weeklyReservePreferred(a, b RoutingProfile) bool {
+	if a.WeeklyRemainingPercent == nil || b.WeeklyRemainingPercent == nil {
+		return false
+	}
+	aBelow := *a.WeeklyRemainingPercent < SubscriptionWeeklyReserveThresholdPercent
+	bBelow := *b.WeeklyRemainingPercent < SubscriptionWeeklyReserveThresholdPercent
+	return !aBelow && bBelow
 }
 
 func detectedRoutingPlan(a *Auth, signals map[string]string, fresh bool) string {
@@ -231,7 +266,7 @@ func observedResetTime(raw string) time.Time {
 	return time.Time{}
 }
 
-// SubscriptionFirstSelector ranks by tier, weekly reset when enabled, then banked-reset expiry.
+// SubscriptionFirstSelector ranks by tier, weekly reserve, weekly reset when enabled, then banked-reset expiry.
 // Affinity can move to an earlier weekly reset within a tier, or return to a better tier when enabled.
 type SubscriptionFirstSelector struct {
 	MaxObservationAge time.Duration
@@ -250,11 +285,37 @@ func selectorUsesSubscriptionFirst(selector Selector) bool {
 	return ok
 }
 
-func (s *SubscriptionFirstSelector) routingTier(a *Auth, now time.Time) int {
-	if tier := SubscriptionRoutingProfile(a, now, s.MaxObservationAge).Tier; tier != nil {
-		return *tier
+func routingTierFromProfile(profile RoutingProfile) int {
+	if profile.Tier != nil {
+		return *profile.Tier
 	}
 	return 1001
+}
+
+func (s *SubscriptionFirstSelector) routingTier(a *Auth, now time.Time) int {
+	return routingTierFromProfile(SubscriptionRoutingProfile(a, now, s.MaxObservationAge))
+}
+
+func weeklyReserveByTier(auths []*Auth, profiles map[string]RoutingProfile) map[int]bool {
+	reserveByTier := make(map[int]bool)
+	tierKnown := make(map[int]bool)
+	for _, a := range auths {
+		if a == nil {
+			continue
+		}
+		profile, ok := profiles[a.ID]
+		if !ok {
+			continue
+		}
+		tier := routingTierFromProfile(profile)
+		if !tierKnown[tier] {
+			tierKnown[tier] = true
+			reserveByTier[tier] = profile.WeeklyRemainingPercent != nil
+		} else if profile.WeeklyRemainingPercent == nil {
+			reserveByTier[tier] = false
+		}
+	}
+	return reserveByTier
 }
 
 // preferredAffinityPick considers only candidates allowed to replace a healthy binding.
@@ -264,25 +325,45 @@ func (s *SubscriptionFirstSelector) preferredAffinityPick(ctx context.Context, p
 		return nil
 	}
 	preferWeekly := s.PreferWeeklyReset == nil || *s.PreferWeeklyReset
-	if !s.ReturnToPreferredTier && !preferWeekly {
-		return nil
-	}
 	now := time.Now()
 	if s.nowFunc != nil {
 		now = s.nowFunc()
 	}
-	boundTier := s.routingTier(bound, now)
-	boundReset := observedResetTime(SubscriptionRoutingProfile(bound, now, s.MaxObservationAge).WeeklyResetAt)
+	profiles := make(map[string]RoutingProfile, len(auths)+1)
+	for _, a := range auths {
+		if a != nil {
+			profiles[a.ID] = SubscriptionRoutingProfile(a, now, s.MaxObservationAge)
+		}
+	}
+	boundProfile, ok := profiles[bound.ID]
+	if !ok {
+		boundProfile = SubscriptionRoutingProfile(bound, now, s.MaxObservationAge)
+		profiles[bound.ID] = boundProfile
+	}
+	reserveByTier := weeklyReserveByTier(auths, profiles)
+	boundTier := routingTierFromProfile(boundProfile)
+	boundReset := observedResetTime(boundProfile.WeeklyResetAt)
 	candidates := []*Auth{bound}
 	for _, a := range auths {
 		if a == nil || a.ID == bound.ID {
 			continue
 		}
-		tier := s.routingTier(a, now)
+		profile, ok := profiles[a.ID]
+		if !ok {
+			profile = SubscriptionRoutingProfile(a, now, s.MaxObservationAge)
+		}
+		tier := routingTierFromProfile(profile)
 		if tier < boundTier && s.ReturnToPreferredTier {
 			candidates = append(candidates, a)
-		} else if tier == boundTier && preferWeekly {
-			reset := observedResetTime(SubscriptionRoutingProfile(a, now, s.MaxObservationAge).WeeklyResetAt)
+		} else if tier == boundTier {
+			if reserveByTier[boundTier] && weeklyReservePreferred(profile, boundProfile) {
+				candidates = append(candidates, a)
+				continue
+			}
+			if !preferWeekly {
+				continue
+			}
+			reset := observedResetTime(profile.WeeklyResetAt)
 			if !reset.IsZero() && (boundReset.IsZero() || reset.Before(boundReset)) {
 				candidates = append(candidates, a)
 			}
@@ -312,6 +393,7 @@ func (s *SubscriptionFirstSelector) Pick(ctx context.Context, provider, model st
 		profiles[a.ID] = SubscriptionRoutingProfile(a, now, s.MaxObservationAge)
 	}
 	preferReset := s.PreferWeeklyReset == nil || *s.PreferWeeklyReset
+	reserveByTier := weeklyReserveByTier(available, profiles)
 	sort.Slice(available, func(i, j int) bool {
 		a, b := available[i], available[j]
 		pa, pb := profiles[a.ID], profiles[b.ID]
@@ -324,6 +406,12 @@ func (s *SubscriptionFirstSelector) Pick(ctx context.Context, provider, model st
 		}
 		if ta != tb {
 			return ta < tb
+		}
+		if reserveByTier[ta] && weeklyReservePreferred(pa, pb) {
+			return true
+		}
+		if reserveByTier[ta] && weeklyReservePreferred(pb, pa) {
+			return false
 		}
 		if preferReset && pa.WeeklyResetAt != pb.WeeklyResetAt {
 			if pa.WeeklyResetAt == "" {

@@ -92,6 +92,99 @@ func TestSubscriptionFirstResetOrdering(t *testing.T) {
 	}
 }
 
+func TestSubscriptionFirstWeeklyReserveOrdering(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	claude := func(id string, tier int, remaining float64, reset time.Duration, observedAt time.Time) *Auth {
+		metadata := map[string]any{"routing_tier": tier, "routing_weekly_reset_at": now.Add(reset).Format(time.RFC3339)}
+		a := &Auth{ID: id, Provider: "claude", Metadata: metadata, Quota: QuotaState{ObservedAt: observedAt}}
+		if !observedAt.IsZero() {
+			a.Quota.Signals = map[string]string{
+				"Anthropic-Ratelimit-Unified-7d-Utilization": strconv.FormatFloat(1-remaining/100, 'f', -1, 64),
+				"Anthropic-Ratelimit-Unified-7d-Reset":       now.Add(reset).Format(time.RFC3339),
+			}
+		}
+		return a
+	}
+	fresh := now
+	for _, tt := range []struct {
+		name       string
+		remainingA float64
+		remainingB float64
+		resetA     time.Duration
+		resetB     time.Duration
+		observedA  time.Time
+		observedB  time.Time
+		tierA      int
+		tierB      int
+		want       string
+	}{
+		{name: "healthy reserve beats earlier reset", remainingA: 20, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
+		{name: "exact threshold remains healthy", remainingA: 30, remainingB: 20, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "both below use earlier reset", remainingA: 20, remainingB: 10, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
+		{name: "both healthy use earlier reset", remainingA: 80, remainingB: 90, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "stale observation keeps reset ordering", remainingA: 20, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: now.Add(-time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "tier precedence beats reserve", remainingA: 20, remainingB: 80, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 0, tierB: 1, want: "a"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			a := claude("a", tt.tierA, tt.remainingA, tt.resetA, tt.observedA)
+			b := claude("b", tt.tierB, tt.remainingB, tt.resetB, tt.observedB)
+			selector := &SubscriptionFirstSelector{nowFunc: func() time.Time { return now }}
+			for _, candidates := range [][]*Auth{{a, b}, {b, a}} {
+				got, err := selector.Pick(context.Background(), "claude", "", cliproxyexecutor.Options{}, candidates)
+				if err != nil || got == nil || got.ID != tt.want {
+					t.Fatalf("pick=%v err=%v want=%s", got, err, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSubscriptionFirstAffinityWeeklyReserve(t *testing.T) {
+	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	account := func(id string, remaining float64, reset time.Duration) *Auth {
+		return &Auth{
+			ID:       id,
+			Provider: "claude",
+			Metadata: map[string]any{"routing_tier": 1, "routing_weekly_reset_at": now.Add(reset).Format(time.RFC3339)},
+			Quota: QuotaState{ObservedAt: now, Signals: map[string]string{
+				"Anthropic-Ratelimit-Unified-7d-Utilization": strconv.FormatFloat(1-remaining/100, 'f', -1, 64),
+				"Anthropic-Ratelimit-Unified-7d-Reset":       now.Add(reset).Format(time.RFC3339),
+			}},
+		}
+	}
+	bound := account("bound", 20, time.Hour)
+	reserve := account("reserve", 80, 2*time.Hour)
+	reserve.Disabled = true
+	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{nowFunc: func() time.Time { return now }})
+	defer selector.Stop()
+	opts := cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{"reserve-session"}}}
+	if got, err := selector.Pick(context.Background(), "claude", "model", opts, []*Auth{bound, reserve}); err != nil || got == nil || got.ID != "bound" {
+		t.Fatalf("initial pick=%v err=%v want=bound", got, err)
+	}
+	reserve.Disabled = false
+	if got, err := selector.Pick(context.Background(), "claude", "model", opts, []*Auth{bound, reserve}); err != nil || got == nil || got.ID != "reserve" {
+		t.Fatalf("reserve pick=%v err=%v want=reserve", got, err)
+	}
+
+	// A missing observation in the same tier disables the reserve rule for the
+	// full eligible set, even when affinity considers a smaller replacement set.
+	bound = account("bound-missing", 20, time.Hour)
+	reserve = account("reserve-missing", 80, 2*time.Hour)
+	missing := &Auth{ID: "missing", Provider: "claude", Metadata: map[string]any{
+		"routing_tier": 1, "routing_weekly_reset_at": now.Add(3 * time.Hour).Format(time.RFC3339),
+	}}
+	selector = NewSessionAffinitySelector(&SubscriptionFirstSelector{nowFunc: func() time.Time { return now }})
+	defer selector.Stop()
+	opts = cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{"reserve-missing-session"}}}
+	auths := []*Auth{bound, reserve, missing}
+	if got, err := selector.Pick(context.Background(), "claude", "model", opts, auths); err != nil || got == nil || got.ID != bound.ID {
+		t.Fatalf("missing initial pick=%v err=%v want=%s", got, err, bound.ID)
+	}
+	if got, err := selector.Pick(context.Background(), "claude", "model", opts, auths); err != nil || got == nil || got.ID != bound.ID {
+		t.Fatalf("missing reserve pick=%v err=%v want=%s", got, err, bound.ID)
+	}
+}
+
 func TestSubscriptionRoutingProfileObservations(t *testing.T) {
 	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
 	future := now.Add(time.Hour)
