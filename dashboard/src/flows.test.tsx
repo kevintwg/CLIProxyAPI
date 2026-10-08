@@ -1107,6 +1107,7 @@ it("shows usage meters and confirms reset redemption before calling the API", as
         {
           ...account,
           provider: "codex",
+          supports_quota: true,
           supports_reset: true,
           usage_limits: {
             plan: "pro",
@@ -1126,6 +1127,7 @@ it("shows usage meters and confirms reset redemption before calling the API", as
     />,
   );
   expect(screen.getByText("40% used")).toBeInTheDocument();
+  expect(screen.getByText("5-hour limit")).toBeInTheDocument();
   expect(screen.getByText("1 available")).toBeInTheDocument();
   await userEvent.click(
     screen.getByRole("button", { name: "Fetch usage for Test account" }),
@@ -1163,6 +1165,7 @@ it("keeps a completed redemption successful when the inventory refresh fails", a
         {
           ...account,
           provider: "codex",
+          supports_quota: true,
           supports_reset: true,
           usage_limits: { banked_reset_count: 1 },
         },
@@ -1182,6 +1185,28 @@ it("keeps a completed redemption successful when the inventory refresh fails", a
   );
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("could not be refreshed");
+});
+
+it("does not attempt usage fetches for providers without a quota meter", async () => {
+  const api = new ManagementApi("test-key");
+  const fetchUsage = vi.spyOn(api, "fetchUsage");
+  render(
+    <Usage
+      api={api}
+      credentials={[account]}
+      onRefresh={vi.fn()}
+      notify={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "Fetch usage" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Fetch usage for Test account" }),
+  ).toBeDisabled();
+  expect(
+    screen.getByText("This provider does not expose a usage meter."),
+  ).toBeInTheDocument();
+  expect(fetchUsage).not.toHaveBeenCalled();
 });
 
 it("rechecks runtime-only status when the account inventory changes during confirmation", async () => {

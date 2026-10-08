@@ -40,6 +40,7 @@ function initialSnapshot(account: Credential): UsageSnapshot {
 }
 
 function usageLabel(window: UsageWindow) {
+  if (window.window_minutes === 300) return "5-hour limit";
   if (window.window_minutes >= 10080) return "Weekly limit";
   if (window.window_minutes >= 1440) return "Daily limit";
   if (window.window_minutes >= 60)
@@ -148,6 +149,10 @@ export function Usage({
       ),
     [credentials],
   );
+  const fetchableAccounts = useMemo(
+    () => usableAccounts.filter((account) => account.supports_quota === true),
+    [usableAccounts],
+  );
 
   async function fetchAccount(account: Credential) {
     setFetching(account.id);
@@ -171,12 +176,12 @@ export function Usage({
     setFetchAllBusy(true);
     setFetchError("");
     const results = await Promise.allSettled(
-      usableAccounts.map((account) => api.fetchUsage(account)),
+      fetchableAccounts.map((account) => api.fetchUsage(account)),
     );
     const next: UsageState = {};
     const errors: string[] = [];
     results.forEach((result, index) => {
-      const account = usableAccounts[index]!;
+      const account = fetchableAccounts[index]!;
       if (result.status === "fulfilled") next[account.id] = result.value;
       else
         errors.push(
@@ -234,7 +239,9 @@ export function Usage({
         <button
           className="button secondary"
           onClick={() => void fetchAll()}
-          disabled={fetchAllBusy || fetching !== null || !usableAccounts.length}
+          disabled={
+            fetchAllBusy || fetching !== null || !fetchableAccounts.length
+          }
         >
           <RefreshCw size={15} className={fetchAllBusy ? "spinning" : ""} />
           {fetchAllBusy ? "Fetching…" : "Fetch usage"}
@@ -300,7 +307,8 @@ export function Usage({
                       fetchAllBusy ||
                       fetching !== null ||
                       account.disabled ||
-                      account.runtime_only
+                      account.runtime_only ||
+                      account.supports_quota !== true
                     }
                     onClick={() => void fetchAccount(account)}
                   >
@@ -312,15 +320,19 @@ export function Usage({
                 </div>
                 {hasData ? (
                   <div className="usage-card-content">
+                    {snapshot.observed_at && (
+                      <p className="usage-observed">
+                        Observed{" "}
+                        {new Date(snapshot.observed_at).toLocaleString()}
+                      </p>
+                    )}
                     {windows.map((window, index) => (
                       <Meter
                         key={`${account.id}-${index}`}
                         label={
-                          index === 0 && account.provider === "codex"
-                            ? "Primary limit"
-                            : index === 1
-                              ? "Secondary limit"
-                              : undefined
+                          index === 1 && account.provider !== "codex"
+                            ? "Secondary limit"
+                            : undefined
                         }
                         window={window}
                       />
@@ -348,8 +360,9 @@ export function Usage({
                   <div className="usage-empty">
                     <CircleHelp size={17} />
                     <span>
-                      No usage reading yet. Fetch this account to load the
-                      provider meter.
+                      {account.supports_quota === true
+                        ? "No usage reading yet. Fetch this account to load the provider meter."
+                        : "This provider does not expose a usage meter."}
                     </span>
                   </div>
                 )}

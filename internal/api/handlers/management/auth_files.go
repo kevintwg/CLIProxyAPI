@@ -728,6 +728,12 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth, quotaSupported .
 			entry["quota_provider"] = auth.Provider
 		}
 	}
+	// Codex OAuth usage is fetched by the built-in management endpoint rather
+	// than a plugin quota provider, so expose the same capability to clients.
+	if strings.EqualFold(auth.Provider, "codex") && auth.AuthKind() == coreauth.AuthKindOAuth {
+		entry["supports_quota"] = true
+		entry["quota_provider"] = auth.Provider
+	}
 	if auth.Metadata != nil {
 		if probe, okProbe := auth.Metadata["quota_probe"]; okProbe && probe != nil {
 			entry["supports_quota"] = true

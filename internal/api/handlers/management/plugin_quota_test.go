@@ -328,9 +328,19 @@ func TestAuthFilesList_IncludesQuotaSupport(t *testing.T) {
 		Provider:   "openai",
 		Attributes: map[string]string{"runtime_only": "true"},
 	}
+	authCodex := &coreauth.Auth{
+		ID:       "codex-auth-list",
+		FileName: "codex.json",
+		Provider: "codex",
+		Attributes: map[string]string{
+			"runtime_only":             "true",
+			coreauth.AttributeAuthKind: coreauth.AuthKindOAuth,
+		},
+	}
 	_, _ = manager.Register(context.Background(), authWithPlugin)
 	_, _ = manager.Register(context.Background(), authWithProbe)
 	_, _ = manager.Register(context.Background(), authNormal)
+	_, _ = manager.Register(context.Background(), authCodex)
 
 	host := pluginhost.New()
 	host.RegisterPluginForTest("opencode-plugin", pluginapi.Plugin{
@@ -359,7 +369,7 @@ func TestAuthFilesList_IncludesQuotaSupport(t *testing.T) {
 		t.Fatalf("failed to unmarshal files: %v", errUnmarshal)
 	}
 
-	var foundPlugin, foundProbe, foundNormal bool
+	var foundPlugin, foundProbe, foundNormal, foundCodex bool
 	for _, f := range resp.Files {
 		id, _ := f["id"].(string)
 		switch id {
@@ -390,10 +400,15 @@ func TestAuthFilesList_IncludesQuotaSupport(t *testing.T) {
 			if supports, ok := f["supports_reset"].(bool); ok && supports {
 				t.Fatalf("expected normal auth to have supports_reset: false, got true")
 			}
+		case "codex-auth-list":
+			foundCodex = true
+			if supports, ok := f["supports_quota"].(bool); !ok || !supports {
+				t.Fatalf("expected Codex OAuth auth to have supports_quota: true, got %#v", f["supports_quota"])
+			}
 		}
 	}
-	if !foundPlugin || !foundProbe || !foundNormal {
-		t.Fatalf("did not find all auth entries: plugin=%v probe=%v normal=%v", foundPlugin, foundProbe, foundNormal)
+	if !foundPlugin || !foundProbe || !foundNormal || !foundCodex {
+		t.Fatalf("did not find all auth entries: plugin=%v probe=%v normal=%v codex=%v", foundPlugin, foundProbe, foundNormal, foundCodex)
 	}
 }
 
