@@ -132,7 +132,9 @@ routing:
   # For OAuth/file credentials, add a top-level numeric "weight" field to the auth JSON.
   # subscription-first chooses the lowest tier, then protects Claude accounts with at least 30% observed weekly capacity remaining.
   # If every account in the selected tier is below that reserve, the earliest usable weekly reset wins when enabled,
-  # followed by the earliest usable banked-reset expiry. Missing or stale weekly observations keep the existing order.
+  # followed by the earliest usable banked-reset expiry. Claude keeps its last weekly reading at any age, including
+  # across token refreshes; a reading taken before its weekly reset counts as full. A Claude login with no reading
+  # yet is tried first so its next response supplies one.
   # Codex detected free/go/plus/pro tiers are 0/1/2/3; unknown tiers rank last.
   # OAuth auth JSON routing_tier (0..1000) overrides detection; Claude tiers are manual.
   # routing_weekly_reset_at accepts a future RFC3339 timestamp; null clears an override.

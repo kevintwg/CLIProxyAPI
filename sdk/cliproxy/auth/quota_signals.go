@@ -214,6 +214,37 @@ func isQuotaSignalHeaderForProvider(provider, name string) bool {
 	return false
 }
 
+// preserveClaudeQuotaObservation carries the last Claude rate-limit reading
+// across a token refresh or auth-file reload, so weekly routing keeps using it
+// until a newer response replaces it. A reading never moves to another account.
+func preserveClaudeQuotaObservation(existing, incoming *Auth, refresh bool) {
+	if !isClaudeAuth(existing) || !isClaudeAuth(incoming) || existing.AuthKind() != incoming.AuthKind() {
+		return
+	}
+	existingIdentity, incomingIdentity := claudeAccountIdentity(existing), claudeAccountIdentity(incoming)
+	if existingIdentity != incomingIdentity {
+		return
+	}
+	// A manager-owned refresh establishes continuity even without account metadata.
+	if existingIdentity == "" && !refresh && CredentialsChanged(existing, incoming) {
+		return
+	}
+	incoming.Quota = mergeQuotaObservation(incoming.Quota, existing.Quota)
+}
+
+func isClaudeAuth(a *Auth) bool {
+	return a != nil && strings.EqualFold(strings.TrimSpace(a.Provider), "claude")
+}
+
+func claudeAccountIdentity(a *Auth) string {
+	accountUUID := authMetadataString(a, "account_uuid")
+	email := strings.ToLower(authMetadataString(a, "email"))
+	if accountUUID == "" && email == "" {
+		return ""
+	}
+	return accountUUID + "\x00" + email
+}
+
 // mergeQuotaObservation keeps the newest observation snapshot instead of
 // unioning signals captured at different times, so merging an older snapshot
 // can never resurrect a stale watermark.
