@@ -95,7 +95,7 @@ func TestSubscriptionFirstResetOrdering(t *testing.T) {
 func TestSubscriptionFirstWeeklyReserveOrdering(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	claude := func(id string, tier int, remaining float64, reset time.Duration, observedAt time.Time) *Auth {
-		metadata := map[string]any{"routing_tier": tier, "routing_weekly_reset_at": now.Add(reset).Format(time.RFC3339)}
+		metadata := map[string]any{"routing_tier": tier, "routing_weekly_reset_at": now.Add(reset).Format(time.RFC3339), "auth_kind": "oauth"}
 		a := &Auth{ID: id, Provider: "claude", Metadata: metadata, Quota: QuotaState{ObservedAt: observedAt}}
 		if !observedAt.IsZero() {
 			a.Quota.Signals = map[string]string{
@@ -122,7 +122,9 @@ func TestSubscriptionFirstWeeklyReserveOrdering(t *testing.T) {
 		{name: "exact threshold remains healthy", remainingA: 30, remainingB: 20, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
 		{name: "both below use earlier reset", remainingA: 20, remainingB: 10, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
 		{name: "both healthy use earlier reset", remainingA: 80, remainingB: 90, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
-		{name: "stale observation keeps reset ordering", remainingA: 20, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: now.Add(-time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "old reading still counts", remainingA: 20, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: now.Add(-48 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "b"},
+		{name: "reading from before weekly reset counts as full", remainingA: 10, remainingB: 20, resetA: -time.Hour, resetB: time.Hour, observedA: now.Add(-8 * 24 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "login without reading is tried first", remainingA: 0, remainingB: 80, resetA: 2 * time.Hour, resetB: time.Hour, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
 		{name: "tier precedence beats reserve", remainingA: 20, remainingB: 80, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 0, tierB: 1, want: "a"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -166,8 +168,8 @@ func TestSubscriptionFirstAffinityWeeklyReserve(t *testing.T) {
 		t.Fatalf("reserve pick=%v err=%v want=reserve", got, err)
 	}
 
-	// A missing observation in the same tier disables the reserve rule for the
-	// full eligible set, even when affinity considers a smaller replacement set.
+	// An account without a reading no longer switches the reserve rule off for
+	// the others: the session still leaves the account below the reserve.
 	bound = account("bound-missing", 20, time.Hour)
 	reserve = account("reserve-missing", 80, 2*time.Hour)
 	missing := &Auth{ID: "missing", Provider: "claude", Metadata: map[string]any{
@@ -177,11 +179,13 @@ func TestSubscriptionFirstAffinityWeeklyReserve(t *testing.T) {
 	defer selector.Stop()
 	opts = cliproxyexecutor.Options{Headers: http.Header{"Session_id": []string{"reserve-missing-session"}}}
 	auths := []*Auth{bound, reserve, missing}
+	reserve.Disabled, missing.Disabled = true, true
 	if got, err := selector.Pick(context.Background(), "claude", "model", opts, auths); err != nil || got == nil || got.ID != bound.ID {
 		t.Fatalf("missing initial pick=%v err=%v want=%s", got, err, bound.ID)
 	}
-	if got, err := selector.Pick(context.Background(), "claude", "model", opts, auths); err != nil || got == nil || got.ID != bound.ID {
-		t.Fatalf("missing reserve pick=%v err=%v want=%s", got, err, bound.ID)
+	reserve.Disabled, missing.Disabled = false, false
+	if got, err := selector.Pick(context.Background(), "claude", "model", opts, auths); err != nil || got == nil || got.ID != reserve.ID {
+		t.Fatalf("missing reserve pick=%v err=%v want=%s", got, err, reserve.ID)
 	}
 }
 
@@ -491,6 +495,57 @@ func TestSubscriptionFirstManagerExecution(t *testing.T) {
 	registry.GetGlobalRegistry().UnregisterClient(a.ID)
 	manager.RefreshSchedulerEntry(a.ID)
 	execute(b.ID)
+}
+
+func TestClaudeWeeklyReadingSurvivesRefreshAndReload(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	observedAt := time.Now().Add(-48 * time.Hour)
+	reset := time.Now().Add(72 * time.Hour)
+	base, err := manager.Register(context.Background(), &Auth{ID: "claude-reading", Provider: "claude", Status: StatusActive,
+		Metadata: map[string]any{"access_token": "synthetic-token", "account_uuid": "synthetic-uuid", "email": "synthetic@example.test", "routing_tier": 1},
+		Quota: QuotaState{ObservedAt: observedAt, Signals: map[string]string{
+			"Anthropic-Ratelimit-Unified-7d-Utilization": "0.93",
+			"Anthropic-Ratelimit-Unified-7d-Reset":       strconv.FormatInt(reset.Unix(), 10),
+		}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	weeklyRemaining := func(a *Auth) float64 {
+		t.Helper()
+		p := SubscriptionRoutingProfile(a, time.Now(), 30*time.Minute)
+		if p.WeeklyRemainingPercent == nil || p.WeeklyResetAt == "" {
+			t.Fatalf("reading lost: %+v", p)
+		}
+		return *p.WeeklyRemainingPercent
+	}
+
+	refreshed := base.Clone()
+	refreshed.Metadata["access_token"] = "synthetic-new-token"
+	refreshed.Quota = QuotaState{}
+	updated, err := manager.UpdateRefreshedAuth(context.Background(), base, refreshed)
+	if err != nil || !updated.Quota.ObservedAt.Equal(observedAt) {
+		t.Fatalf("token refresh lost reading: %v", err)
+	}
+	if got := weeklyRemaining(updated); got < 6.9 || got > 7.1 {
+		t.Fatalf("weekly remaining=%v want 7", got)
+	}
+
+	reloaded := updated.Clone()
+	reloaded.Quota = QuotaState{}
+	updated, err = manager.Update(context.Background(), reloaded)
+	if err != nil || !updated.Quota.ObservedAt.Equal(observedAt) {
+		t.Fatalf("auth file reload lost reading: %v", err)
+	}
+	weeklyRemaining(updated)
+
+	changed := updated.Clone()
+	changed.Quota = QuotaState{}
+	changed.Metadata["account_uuid"] = "different-uuid"
+	changed.Metadata["email"] = "different@example.test"
+	updated, err = manager.Update(context.Background(), changed)
+	if err != nil || !updated.Quota.ObservedAt.IsZero() || len(updated.Quota.Signals) != 0 {
+		t.Fatalf("different account inherited reading: %v", err)
+	}
 }
 
 func TestSubscriptionRoutingMetadataSurvivesRefresh(t *testing.T) {

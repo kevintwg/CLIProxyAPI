@@ -249,6 +249,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 			}
 		}
 	}
+	preserveClaudeQuotaObservation(existing, auth, mode == updateModeRefresh)
 	now := time.Now()
 	auth.UpdatedAt = now
 	cooldownStateChanged = normalizeModelStates(auth) || cooldownStateChanged
