@@ -243,7 +243,12 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		if existing.Quota.Exceeded && existing.Quota.Reason == "credential_quota" && existing.Quota.NextRecoverAt.After(time.Now()) {
 			auth.Unavailable = existing.Unavailable
 			auth.NextRetryAfter = existing.NextRetryAfter
-			auth.Quota = existing.Quota
+			if isClaudeAuth(existing) {
+				// Claude readings move only through the account check below.
+				applyCooldownFields(&auth.Quota, existing.Quota)
+			} else {
+				auth.Quota = existing.Quota
+			}
 			if auth.Status == StatusActive {
 				auth.Status = existing.Status
 			}

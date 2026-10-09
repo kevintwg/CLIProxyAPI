@@ -548,6 +548,37 @@ func TestClaudeWeeklyReadingSurvivesRefreshAndReload(t *testing.T) {
 	}
 }
 
+func TestClaudeCooldownReloadKeepsReadingOnlyForSameAccount(t *testing.T) {
+	manager := NewManager(nil, nil, nil)
+	observedAt := time.Now().Add(-time.Hour)
+	recoverAt := time.Now().Add(time.Hour)
+	base, err := manager.Register(context.Background(), &Auth{ID: "claude-cooling", Provider: "claude", Status: StatusActive,
+		Metadata:    map[string]any{"access_token": "synthetic-token", "account_uuid": "synthetic-uuid", "email": "synthetic@example.test"},
+		Unavailable: true, NextRetryAfter: recoverAt,
+		Quota: QuotaState{Exceeded: true, Reason: "credential_quota", NextRecoverAt: recoverAt, ObservedAt: observedAt,
+			Signals: map[string]string{"Anthropic-Ratelimit-Unified-7d-Utilization": "0.93"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := base.Clone()
+	reloaded.Quota = QuotaState{}
+	updated, err := manager.Update(context.Background(), reloaded)
+	if err != nil || !updated.Quota.Exceeded || !updated.Quota.NextRecoverAt.Equal(recoverAt) || !updated.Quota.ObservedAt.Equal(observedAt) {
+		t.Fatalf("same-account reload lost cooldown or reading: %v %+v", err, updated.Quota)
+	}
+
+	replaced := updated.Clone()
+	replaced.Quota = QuotaState{}
+	replaced.Metadata["access_token"] = "synthetic-other-token"
+	replaced.Metadata["account_uuid"] = "different-uuid"
+	replaced.Metadata["email"] = "different@example.test"
+	updated, err = manager.Update(context.Background(), replaced)
+	if err != nil || !updated.Quota.ObservedAt.IsZero() || len(updated.Quota.Signals) != 0 {
+		t.Fatalf("different account inherited reading during cooldown: %v %+v", err, updated.Quota)
+	}
+}
+
 func TestSubscriptionRoutingMetadataSurvivesRefresh(t *testing.T) {
 	base := &Auth{ID: "a", Metadata: map[string]any{"routing_tier": 2, "routing_weekly_reset_at": "2026-10-05T00:00:00Z", "access_token": "old"}}
 	updated := base.Clone()

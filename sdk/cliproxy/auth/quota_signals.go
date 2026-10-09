@@ -218,10 +218,7 @@ func isQuotaSignalHeaderForProvider(provider, name string) bool {
 // across a token refresh or auth-file reload, so weekly routing keeps using it
 // until a newer response replaces it. A reading never moves to another account.
 func preserveClaudeQuotaObservation(existing, incoming *Auth, refresh bool) {
-	if existing == nil || incoming == nil ||
-		!strings.EqualFold(strings.TrimSpace(existing.Provider), "claude") ||
-		!strings.EqualFold(strings.TrimSpace(incoming.Provider), "claude") ||
-		existing.AuthKind() != incoming.AuthKind() {
+	if !isClaudeAuth(existing) || !isClaudeAuth(incoming) || existing.AuthKind() != incoming.AuthKind() {
 		return
 	}
 	existingIdentity, incomingIdentity := claudeAccountIdentity(existing), claudeAccountIdentity(incoming)
@@ -233,6 +230,10 @@ func preserveClaudeQuotaObservation(existing, incoming *Auth, refresh bool) {
 		return
 	}
 	incoming.Quota = mergeQuotaObservation(incoming.Quota, existing.Quota)
+}
+
+func isClaudeAuth(a *Auth) bool {
+	return a != nil && strings.EqualFold(strings.TrimSpace(a.Provider), "claude")
 }
 
 func claudeAccountIdentity(a *Auth) string {

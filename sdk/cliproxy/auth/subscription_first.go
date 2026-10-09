@@ -122,7 +122,7 @@ func SubscriptionRoutingProfile(a *Auth, now time.Time, maxAge time.Duration) Ro
 	}
 	observed := !a.Quota.ObservedAt.IsZero() && !a.Quota.ObservedAt.After(now)
 	fresh := observed && now.Sub(a.Quota.ObservedAt) <= maxAge
-	isClaude := strings.EqualFold(strings.TrimSpace(a.Provider), "claude")
+	isClaude := isClaudeAuth(a)
 	// Claude routes on its last reading at any age; the next response through
 	// the account replaces it.
 	usable := fresh || (isClaude && observed)
@@ -208,7 +208,7 @@ func weeklyReserveRank(a *Auth, profile RoutingProfile) int {
 		}
 		return weeklyReserveHealthy
 	}
-	if a != nil && strings.EqualFold(strings.TrimSpace(a.Provider), "claude") && a.AuthKind() == AuthKindOAuth {
+	if isClaudeAuth(a) && a.AuthKind() == AuthKindOAuth {
 		return weeklyReserveUnread
 	}
 	return weeklyReserveHealthy
