@@ -118,12 +118,12 @@ func TestSubscriptionFirstWeeklyReserveOrdering(t *testing.T) {
 		tierB      int
 		want       string
 	}{
-		{name: "healthy reserve beats earlier reset", remainingA: 20, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
-		{name: "exact threshold remains healthy", remainingA: 30, remainingB: 20, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
-		{name: "both below use earlier reset", remainingA: 20, remainingB: 10, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
+		{name: "healthy reserve beats earlier reset", remainingA: 9, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
+		{name: "exact threshold remains healthy", remainingA: 10, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "both below use earlier reset", remainingA: 9, remainingB: 5, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
 		{name: "both healthy use earlier reset", remainingA: 80, remainingB: 90, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
-		{name: "old reading still counts", remainingA: 20, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: now.Add(-48 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "b"},
-		{name: "reading from before weekly reset counts as full", remainingA: 10, remainingB: 20, resetA: -time.Hour, resetB: time.Hour, observedA: now.Add(-8 * 24 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "old reading still counts", remainingA: 9, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: now.Add(-48 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "b"},
+		{name: "reading from before weekly reset counts as full", remainingA: 9, remainingB: 5, resetA: -time.Hour, resetB: time.Hour, observedA: now.Add(-8 * 24 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "a"},
 		{name: "login without reading is tried first", remainingA: 0, remainingB: 80, resetA: 2 * time.Hour, resetB: time.Hour, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
 		{name: "tier precedence beats reserve", remainingA: 20, remainingB: 80, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 0, tierB: 1, want: "a"},
 	} {
@@ -154,7 +154,7 @@ func TestSubscriptionFirstAffinityWeeklyReserve(t *testing.T) {
 			}},
 		}
 	}
-	bound := account("bound", 20, time.Hour)
+	bound := account("bound", 9, time.Hour)
 	reserve := account("reserve", 80, 2*time.Hour)
 	reserve.Disabled = true
 	selector := NewSessionAffinitySelector(&SubscriptionFirstSelector{nowFunc: func() time.Time { return now }})
@@ -170,7 +170,7 @@ func TestSubscriptionFirstAffinityWeeklyReserve(t *testing.T) {
 
 	// An account without a reading no longer switches the reserve rule off for
 	// the others: the session still leaves the account below the reserve.
-	bound = account("bound-missing", 20, time.Hour)
+	bound = account("bound-missing", 9, time.Hour)
 	reserve = account("reserve-missing", 80, 2*time.Hour)
 	missing := &Auth{ID: "missing", Provider: "claude", Metadata: map[string]any{
 		"routing_tier": 1, "routing_weekly_reset_at": now.Add(3 * time.Hour).Format(time.RFC3339),
