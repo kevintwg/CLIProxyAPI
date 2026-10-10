@@ -33,7 +33,7 @@ type RoutingProfile struct {
 // SubscriptionWeeklyReserveThresholdPercent keeps an account out of the
 // normal same-tier rotation once its observed weekly capacity falls below this
 // threshold. Tier precedence still wins over the reserve rule.
-const SubscriptionWeeklyReserveThresholdPercent = 30.0
+const SubscriptionWeeklyReserveThresholdPercent = 10.0
 
 func ManualRoutingTier(a *Auth) (int, bool) {
 	if a == nil {
