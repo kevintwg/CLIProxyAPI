@@ -119,7 +119,7 @@ func TestSubscriptionFirstWeeklyReserveOrdering(t *testing.T) {
 		want       string
 	}{
 		{name: "healthy reserve beats earlier reset", remainingA: 9, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
-		{name: "exact threshold remains healthy", remainingA: 10, remainingB: 9, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
+		{name: "exact threshold remains healthy", remainingA: 10, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
 		{name: "both below use earlier reset", remainingA: 9, remainingB: 5, resetA: 2 * time.Hour, resetB: time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "b"},
 		{name: "both healthy use earlier reset", remainingA: 80, remainingB: 90, resetA: time.Hour, resetB: 2 * time.Hour, observedA: fresh, observedB: fresh, tierA: 1, tierB: 1, want: "a"},
 		{name: "old reading still counts", remainingA: 9, remainingB: 80, resetA: time.Hour, resetB: 2 * time.Hour, observedA: now.Add(-48 * time.Hour), observedB: fresh, tierA: 1, tierB: 1, want: "b"},

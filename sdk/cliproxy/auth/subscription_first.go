@@ -188,7 +188,7 @@ func observedClaudeWeeklyRemaining(signals map[string]string, now time.Time) (fl
 	if utilization > 1 {
 		utilization = 1
 	}
-	return (1 - utilization) * 100, true
+	return 100 - utilization*100, true
 }
 
 const (
