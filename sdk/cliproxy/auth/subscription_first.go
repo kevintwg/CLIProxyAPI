@@ -31,7 +31,7 @@ type RoutingProfile struct {
 }
 
 // SubscriptionWeeklyReserveThresholdPercent keeps an account out of the
-// normal same-tier rotation once its observed weekly capacity falls below this
+// normal same-tier rotation once its observed weekly capacity reaches or falls below this
 // threshold. Tier precedence still wins over the reserve rule.
 const SubscriptionWeeklyReserveThresholdPercent = 10.0
 
@@ -199,11 +199,11 @@ const (
 
 // weeklyReserveRank orders accounts within a tier. A Claude subscription
 // account with no reading yet goes first so its next response supplies one,
-// then accounts at or above the weekly reserve, then accounts below it.
+// then accounts above the weekly reserve, then accounts at or below it.
 // Accounts without a Claude reading otherwise rank as healthy.
 func weeklyReserveRank(a *Auth, profile RoutingProfile) int {
 	if profile.WeeklyRemainingPercent != nil {
-		if *profile.WeeklyRemainingPercent < SubscriptionWeeklyReserveThresholdPercent {
+		if *profile.WeeklyRemainingPercent <= SubscriptionWeeklyReserveThresholdPercent {
 			return weeklyReserveBelow
 		}
 		return weeklyReserveHealthy
